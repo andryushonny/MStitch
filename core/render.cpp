@@ -8,10 +8,8 @@
 
 namespace ms {
 
-CanvasImage render(const std::vector<const Tile*>& tiles, const std::vector<Vec2>& pos,
-                   const std::vector<float>& flat, double x0, double y0, int w, int h) {
-    CanvasImage c;
-    if (tiles.empty()) return c;
+void canvas_box(const std::vector<const Tile*>& tiles, const std::vector<Vec2>& pos, double& x0, double& y0, int& w,
+                int& h) {
     if (w <= 0 || h <= 0) {
         double mx = 1e300, my = 1e300, Mx = -1e300, My = -1e300;
         for (size_t k = 0; k < tiles.size(); ++k) {
@@ -25,6 +23,13 @@ CanvasImage render(const std::vector<const Tile*>& tiles, const std::vector<Vec2
         w = int(std::ceil(Mx - x0));
         h = int(std::ceil(My - y0));
     }
+}
+
+CanvasImage render(const std::vector<const Tile*>& tiles, const std::vector<Vec2>& pos,
+                   const std::vector<float>& flat, double x0, double y0, int w, int h) {
+    CanvasImage c;
+    if (tiles.empty()) return c;
+    canvas_box(tiles, pos, x0, y0, w, h);
     c.w = w;
     c.h = h;
     c.ox = x0;

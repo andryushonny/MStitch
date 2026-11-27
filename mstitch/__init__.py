@@ -27,8 +27,9 @@ except ImportError as _e:
 from . import cuda
 from .calibrate import calibrate
 from .canvas import Canvas, Cell
+from .eta import Estimate, Eta, plan_features
 from .profile import Profile
 from .session import Report, Session
 
-__version__ = "0.2.2"
-__all__ = ["cuda", "Canvas", "Cell", "Profile", "Report", "Session", "calibrate", "__version__"]
+__version__ = "0.3.0"
+__all__ = ["cuda", "Canvas", "Cell", "Estimate", "Eta", "plan_features", "Profile", "Report", "Session", "calibrate", "__version__"]

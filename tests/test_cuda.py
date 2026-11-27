@@ -64,7 +64,10 @@ MOCK_SCRIPT = textwrap.dedent("""
         for f in sc.frames:
             s.add(f)
         rep = s.solve()
-        out[b] = dict(t=rep.edges["t"].tolist(), ncc=rep.edges["ncc"].tolist(), found=rep.edges["found"].tolist(),
+        cv = s.render()
+        np.save({here!r} + f"/_mock_{{b}}_img.npy", cv.image)
+        np.save({here!r} + f"/_mock_{{b}}_owner.npy", cv.owner)
+        out[b] = dict(render=s.render_backend, render_note=s.render_note, t=rep.edges["t"].tolist(), ncc=rep.edges["ncc"].tolist(), found=rep.edges["found"].tolist(),
                       pos=rep.positions_px.tolist(), backend=rep.stats["backend"], note=rep.stats["backend_note"])
     print(json.dumps(out))
 """)
@@ -75,8 +78,9 @@ def run_mock(nx, ny, mode="quick", max_slots=None):
     if not mock or not Path(mock).exists():
         pytest.skip("build tests/mock_cuda (-DMSTITCH_MOCK_CUDA=ON) and set MSTITCH_MOCK_CUDA")
     env = dict(os.environ)
-    if max_slots:
+    if max_slots:      # tight memory: small spectrum cache, thin map bands (frames recycled between bands)
         env["MSTITCH_GPU_MAX_SLOTS"] = str(max_slots)
+        env["MSTITCH_GPU_BAND_ROWS"] = "96"
     code = MOCK_SCRIPT.format(here=str(HERE), mock=mock, nx=nx, ny=ny, mode=mode)
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr[-3000:]
@@ -93,6 +97,14 @@ def test_gpu_path_on_mock_matches_cpu(mode, max_slots):
     assert c["found"] == g["found"]
     np.testing.assert_allclose(g["t"], c["t"], atol=1e-6)
     np.testing.assert_allclose(g["pos"], c["pos"], atol=1e-6)
+    # the map: the GPU render path (bands, frame slots, cell lists) gives the CPU's pixels exactly
+    assert g["render"] == "cuda", g["render_note"]
+    print(g["render_note"])
+    ic, ig = np.load(HERE / "_mock_cpu_img.npy"), np.load(HERE / "_mock_cuda_img.npy")
+    oc, og = np.load(HERE / "_mock_cpu_owner.npy"), np.load(HERE / "_mock_cuda_owner.npy")
+    for f in HERE.glob("_mock_*.npy"):
+        f.unlink()
+    assert ic.shape == ig.shape and (ic == ig).all() and (oc == og).all()
     if max_slots:    # tight memory: spectra had to be evicted and recomputed, and the result is the same
         assert " 0 evictions" not in g["note"]
 
@@ -109,6 +121,22 @@ def test_real_gpu_matches_cpu(mode):
         res[b] = s.solve()
     c, g = res["cpu"], res["cuda"]
     assert g.stats["backend"] == "cuda"
+    # the map from the same positions: GPU vs CPU pixels
+    imgs = {}
+    for b in ("cpu", "cuda"):
+        s = ms.Session(prof(sc), backend=b, mode=mode)
+        for f in sc.frames:
+            s.add(f)
+        s.solve()
+        s.report.positions_px[:] = c.positions_px    # same placement for both
+        cv = s.render()
+        assert s.render_backend == b, s.render_note
+        imgs[b] = (cv.image, cv.owner)
+    (ic, oc), (ig, og) = imgs["cpu"], imgs["cuda"]
+    assert ic.shape == ig.shape
+    diff = np.abs(ic.astype(int) - ig.astype(int))
+    assert diff.max() <= 1 and (diff > 0).mean() < 1e-3      # IEEE on both; MSVC /fp:fast may round a few
+    assert (oc == og).mean() > 0.999
     print(g.stats["backend_note"])
     # cuFFT and pocketfft round differently: allow a rare different peak order, demand the same placement
     assert (c.edges["found"] == g.edges["found"]).mean() > 0.98

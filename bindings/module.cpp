@@ -93,13 +93,15 @@ NB_MODULE(_core, m) {
              },
              "image"_a, "sx"_a, "sy"_a, "moving"_a = false, "row"_a = -1, "col"_a = -1)
         .def("wait", &ms::Session::wait, nb::call_guard<nb::gil_scoped_release>())
+        .def("pending", &ms::Session::pending)
         .def("tile_info",
              [](const ms::Session& s, size_t i) {
                  const auto& t = s.tile(i);
                  nb::dict d;
                  d["w"] = t.w; d["h"] = t.h; d["full_w"] = t.full_w; d["full_h"] = t.full_h;
                  d["sx"] = t.sx; d["sy"] = t.sy; d["moving"] = t.moving; d["row"] = t.row; d["col"] = t.col;
-                 d["ready"] = t.ready; d["error"] = t.error;
+                 d["ready"] = t.ready.load(); d["error"] = t.failed.load() ? t.error : std::string();
+                 d["prep_ms"] = t.prep_ms;
                  return d;
              })
         .def("tile_rgb",
@@ -126,6 +128,7 @@ NB_MODULE(_core, m) {
                  return edges_dict(s.edges());
              },
              "search_px"_a, "gated"_a = true, "peaks"_a = 8, "min_overlap"_a = 0.03, "backend"_a = "auto")
+        .def_prop_ro("threads", [](const ms::Session& s) { return s.threads(); })
         .def_prop_ro("backend_used", &ms::Session::backend_used)
         .def_prop_ro("backend_note", &ms::Session::backend_note)
         .def("edges", [](const ms::Session& s) { return edges_dict(s.edges()); })
@@ -164,7 +167,7 @@ NB_MODULE(_core, m) {
              [](const ms::Session& s, std::vector<int> idx,
                 nb::ndarray<double, nb::shape<-1, 2>, nb::c_contig, nb::device::cpu> pos,
                 std::optional<nb::ndarray<float, nb::c_contig, nb::device::cpu>> flat, double x0, double y0, int w,
-                int h) {
+                int h, std::string backend) {
                  std::vector<const ms::Tile*> ts;
                  std::vector<ms::Vec2> p;
                  auto all = to_vec2(pos);
@@ -173,18 +176,40 @@ NB_MODULE(_core, m) {
                  std::vector<float> fl;
                  if (flat) fl.assign(flat->data(), flat->data() + flat->size());
                  ms::CanvasImage c;
+                 std::string used = "cpu", note;
                  {
                      nb::gil_scoped_release r;
-                     c = ms::render(ts, p, fl, x0, y0, w, h);
+                     if (backend != "cpu") {
+                         std::string why;
+                         if (auto* g = ms::cuda::gpu(&why)) {
+                             try {
+                                 ms::cuda::RenderStats st;
+                                 c = ms::cuda::gpu_render(g, ts, p, fl, x0, y0, w, h, &st);
+                                 used = "cuda";
+                                 note = std::to_string(st.bands) + " bands of " + std::to_string(st.rows_per_band) +
+                                        " rows, " + std::to_string(st.slots) + " frame slots, " +
+                                        std::to_string(int(st.upload_mb)) + " MB up, " + std::to_string(int(st.ms)) +
+                                        " ms";
+                             } catch (const std::exception& e) {
+                                 why = e.what();
+                             }
+                         }
+                         if (used == "cpu") {
+                             if (backend == "cuda") throw std::runtime_error("CUDA render unavailable: " + why);
+                             note = why;
+                         }
+                     }
+                     if (used == "cpu") c = ms::render(ts, p, fl, x0, y0, w, h);
                  }
                  // owner: index into idx -> frame index
                  for (auto& o : c.owner)
                      if (o >= 0) o = ts[o]->id;
                  const size_t cw = c.w, ch = c.h;
                  return nb::make_tuple(to_numpy(std::move(c.rgb), {ch, cw, 3}), to_numpy(std::move(c.owner), {ch, cw}),
-                                       c.ox, c.oy);
+                                       c.ox, c.oy, used, note);
              },
-             "idx"_a, "pos"_a, "flat"_a.none(), "x0"_a = 0.0, "y0"_a = 0.0, "w"_a = 0, "h"_a = 0);
+             "idx"_a, "pos"_a, "flat"_a.none(), "x0"_a = 0.0, "y0"_a = 0.0, "w"_a = 0, "h"_a = 0,
+             "backend"_a = "auto");
 
     m.def("cuda_load", &ms::cuda::load, "driver"_a, "nvrtc"_a, "cufft"_a,
           "Load the CUDA driver, NVRTC and cuFFT from the first path that opens in each list.");

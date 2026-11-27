@@ -1,6 +1,7 @@
 """Stitching session: frames from MControl in, report + canvas out."""
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -8,6 +9,7 @@ import numpy as np
 from . import _core
 from . import cuda as _cuda
 from .canvas import Canvas
+from .eta import Eta, Estimate, plan_features
 from .profile import Profile
 
 MODES = {"quick": 2, "quality": 1}   # working level per mode (2 = quarter, 1 = half resolution)
@@ -53,8 +55,10 @@ class Session:
     """
 
     def __init__(self, profile: Profile, mode: str = "quick", level: int | None = None, threads: int = 0,
-                 backend: str = "auto"):
-        """backend: 'auto' (GPU when there is one, else CPU), 'cuda' (GPU or an error), 'cpu'."""
+                 backend: str = "auto", eta: Eta | bool = True):
+        """backend: 'auto' (GPU when there is one, else CPU), 'cuda' (GPU or an error), 'cpu'.
+        eta: the timing model this session learns into and predicts from (True: the user's default file,
+        False: none)."""
         if mode not in MODES:
             raise ValueError(f"mode must be one of {list(MODES)}")
         if backend not in ("auto", "cuda", "cpu"):
@@ -68,6 +72,8 @@ class Session:
         self.level = MODES[mode] if level is None else level
         self._s = _core.Session(self.level, list(profile.m), threads)
         self.report: Report | None = None
+        self.eta: Eta | None = Eta() if eta is True else (eta or None)
+        self.timings: dict = {}           # seconds of the last solve() / render(), by phase
 
     def __len__(self):
         return len(self._s)
@@ -93,7 +99,9 @@ class Session:
         """Register overlapping pairs, then place all frames. search_um: how far a frame may be from where the
         stage says (default 6 x repeatability)."""
         s = self._s
+        t0 = time.perf_counter()
         s.wait()
+        t1 = time.perf_counter()
         n = len(s)
         infos = [s.tile_info(k) for k in range(n)]
         scale = 2 ** self.level
@@ -101,8 +109,11 @@ class Session:
             search_um = 6 * self.profile.repeatability_um
         search_px = max(4.0, search_um / self.profile.um_per_px / scale)
         s.register(search_px, True, 8, min_overlap, self.backend)
+        t2 = time.perf_counter()
         stats_backend = {"backend": s.backend_used, "backend_note": s.backend_note}
         pos, stats, edges = s.solve(1e-3, min_ncc, 1.5, 5)
+        t3 = time.perf_counter()
+        self.timings = {"prepare_wait": t1 - t0, "register": t2 - t1, "solve": t3 - t2}
         stats.update(stats_backend)
         pred = s.predicted()
         self.report = Report(pos, pred, edges, stats, self._poses(infos, pos, pred, edges, min_ncc), self.level)
@@ -152,6 +163,7 @@ class Session:
         (needs >= 8 frames); None = no correction; or an HxWx3 gain."""
         if self.report is None:
             self.solve()
+        t_render = time.perf_counter()
         s, rep = self._s, self.report
         n = len(s)
         idx = list(range(n))
@@ -163,8 +175,40 @@ class Session:
                 step = max(1, len(ready) // 64)
                 flat = s.estimate_flat(ready[::step])
         pos = np.ascontiguousarray(rep.positions_px, dtype=np.float64)
-        img, owner, ox, oy = s.render(idx, pos, None if flat is None else np.ascontiguousarray(flat, np.float32))
-        return Canvas(img, owner, self.level, (ox, oy), self._stage_from_px(ready, pos, ox, oy), rep.poses)
+        img, owner, ox, oy, used, note = s.render(idx, pos, None if flat is None else
+                                                  np.ascontiguousarray(flat, np.float32), backend=self.backend)
+        self.render_backend, self.render_note = used, note
+        cv = Canvas(img, owner, self.level, (ox, oy), self._stage_from_px(ready, pos, ox, oy), rep.poses)
+        self.timings["render"] = time.perf_counter() - t_render
+        self._learn(ready, img.shape)
+        return cv
+
+    # --- how long it takes (eta.py)
+    def _key(self, backend: str) -> str:
+        inf = self._s.tile_info(0) if len(self._s) else {"full_w": self.profile.frame[0],
+                                                          "full_h": self.profile.frame[1]}
+        return Eta.setup_key(self.mode, backend, (inf["full_w"], inf["full_h"]), Eta.device_name(backend))
+
+    def _learn(self, ready, shape) -> None:
+        if self.eta is None or not {"register", "solve", "render"} <= self.timings.keys():
+            return
+        preps = [self._s.tile_info(k)["prep_ms"] for k in ready]
+        prep = float(np.median(preps)) / 1e3 / max(1, self._s.threads) if preps else None
+        feats = {"frames": len(ready), "pairs": int(len(self.report.edges["i"])),
+                 "map_mpx": shape[0] * shape[1] / 1e6}
+        self.eta.record(self._key(self.report.stats["backend"]), feats, self.timings, prep)
+
+    def eta_remaining(self) -> Estimate | None:
+        """Seconds still needed if the frames added so far were the whole scan: frames still being prepared +
+        registration + solve + render. None until this setup has been timed min_runs times."""
+        if self.eta is None or not len(self._s):
+            return None
+        backend = self.backend
+        if backend == "auto":
+            backend = "cuda" if _cuda.info()["ok"] else "cpu"
+        xy = [(i["sx"], i["sy"]) for i in (self._s.tile_info(k) for k in range(len(self._s)))]
+        f = plan_features(self.profile, xy, self.mode, self.level)
+        return self.eta.predict_features(self._key(backend), f, pending_frames=self._s.pending())
 
     def _stage_from_px(self, ready, pos, ox, oy):
         """Affine canvas pixel -> stage um, fitted on frame centres (falls back to the profile matrix)."""

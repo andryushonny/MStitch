@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+- The map is rendered on the GPU (`render_band`): bands of rows, frames in VRAM only while a band needs them,
+  a cell index per band; the same pixels as the CPU render (kernels compiled without fast math and FMA).
+- Timing model (`mstitch.Eta`): one linear layer `t = W·[1, frames, pairs, map Mpx]` per phase, weights ≥ 0,
+  learned from the user's runs per setup; `Eta.predict(profile, mode, plan)` before a scan,
+  `Session.eta_remaining()` during it; no estimate for the first two runs of a setup.
+- Per-frame preparation time and the frames still being prepared (`pending`) are tracked.
+
 ## 0.2.2
 - GPU: cuFFT plans cached per frame size (planning took most of a short run); the GPU starts and compiles its
   kernels when the Session is made, not in the first solve().

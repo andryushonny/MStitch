@@ -30,6 +30,8 @@ public:
     void wait();
 
     size_t size() const { return tiles_.size(); }
+    size_t pending() const;
+    unsigned threads() const { return pool_.size(); }   // frames still being unpacked / prepared
     const Tile& tile(size_t i) const { return *tiles_[i]; }
 
     // Stage-predicted top-left of each frame at the working level (frame centre = stage position).

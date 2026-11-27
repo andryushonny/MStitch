@@ -28,11 +28,15 @@ int Session::add_sensor(std::string data, int w, int h, int bits, std::string fm
     t->full_w = w; t->full_h = h;
     const int level = std::max(1, level_);
     pool_.submit([t, data = std::move(data), w, h, bits, fmt = std::move(fmt), codec = std::move(codec), level] {
+        const auto t0 = std::chrono::steady_clock::now();
         try {
             auto px = unpack(reinterpret_cast<const uint8_t*>(data.data()), data.size(), w, h, bits, codec);
             prepare_tile(*t, sensor_to_rgb(px, w, h, bits, fmt, level));
+            // read only after wait(): the pool's synchronisation publishes it
+            t->prep_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         } catch (const std::exception& e) {
             t->error = e.what();
+            t->failed = true;
         }
     });
     return id;
@@ -52,16 +56,25 @@ int Session::add_image(std::vector<uint8_t> data, int w, int h, int channels, in
     t->full_w = w; t->full_h = h;
     const int level = level_;
     pool_.submit([t, data = std::move(data), w, h, channels, bps, level] {
+        const auto t0 = std::chrono::steady_clock::now();
         try {
             prepare_tile(*t, image_to_rgb(data.data(), w, h, channels, bps, level));
+            t->prep_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         } catch (const std::exception& e) {
             t->error = e.what();
+            t->failed = true;
         }
     });
     return id;
 }
 
 void Session::wait() { pool_.wait(); }
+
+size_t Session::pending() const {
+    size_t n = 0;
+    for (auto& t : tiles_) n += !t->ready && !t->failed;
+    return n;
+}
 
 std::vector<Vec2> Session::predicted() const {
     const double s = 1.0 / double(1 << level_);

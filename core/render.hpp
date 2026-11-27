@@ -15,6 +15,10 @@ struct CanvasImage {
     std::vector<int32_t> owner;     // index of the frame each pixel came from, -1 = none
 };
 
+// Bounding box of all frames when w <= 0 (whole pixels), else the given region.
+void canvas_box(const std::vector<const Tile*>& tiles, const std::vector<Vec2>& pos, double& x0, double& y0, int& w,
+                int& h);
+
 // flat: per-pixel gain of a frame (w*h*3, mean 1) or empty; the view is divided by it.
 // region: x0, y0, w, h in working-level coordinates, or w <= 0 for the bounding box of all frames.
 CanvasImage render(const std::vector<const Tile*>& tiles, const std::vector<Vec2>& pos,

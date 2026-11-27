@@ -15,7 +15,8 @@ Target: RTX 2050 laptop (Ampere GA107, `sm_86`, 4 GB, 112 GB/s). Windows driver 
 | int16 → float, FFT of each frame | GPU: batched cuFFT R2C, 16 frames per call; spectra cached in VRAM |
 | cross-power, inverse FFT, top-8 peaks | GPU: batches of up to 32 pairs (`cross_power`, batched C2R, `topk_peaks`) |
 | choose the candidate, NCC, sub-pixel | CPU pool, for batch *b* while the GPU computes batch *b + 1* |
-| global solve, render | CPU |
+| global solve | CPU |
+| render the map | GPU: `render_band`, bands of rows (~190 MB of output each); frames uploaded when a band first needs them and freed after their last band; a 32×32-pixel cell index lists the frames that can cover each pixel. Same arithmetic as the CPU render (NVRTC with `--fmad=false`, no fast math) |
 
 Only the peaks (8 integers per pair) come back from the GPU.
 
@@ -35,10 +36,11 @@ batch are evicted and recomputed later — same result, more FFTs.
 ## Tests
 
 * `test_kernels_compile`: the kernels compile for sm_75/86/89 (NVRTC only).
-* `test_gpu_path_on_mock_matches_cpu`: the whole GPU path (batches, cache, evictions, peaks back to their pairs)
-  on a fake driver + cuFFT that runs on the CPU (`tests/mock_cuda`, `-DMSTITCH_MOCK_CUDA=ON`): identical edges and
-  positions to the CPU path.
-* `test_real_gpu_matches_cpu`: on a machine with an NVIDIA GPU, GPU vs CPU on a synthetic 8×6 scan.
+* `test_gpu_path_on_mock_matches_cpu`: the whole GPU path (batches, cache, evictions, peaks back to their pairs;
+  map bands, frame slots, cell lists) on a fake driver + cuFFT that runs on the CPU (`tests/mock_cuda`,
+  `-DMSTITCH_MOCK_CUDA=ON`): identical edges, positions and map pixels to the CPU path.
+* `test_real_gpu_matches_cpu`: on a machine with an NVIDIA GPU, GPU vs CPU on a synthetic 8×6 scan: placement,
+  and map pixels (≤ 1 grey level apart in < 0.1 % of pixels; MSVC's `/fp:fast` may round a few differently).
 
 ## Next
 

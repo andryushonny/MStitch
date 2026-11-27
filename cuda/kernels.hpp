@@ -61,6 +61,55 @@ extern "C" __global__ void topk_peaks(float* r, int H, int W, int k, int rad, in
         __syncthreads();
     }
 }
+
+// One band of the map: rows [y0, y0 + rows). Every pixel takes the frame whose centre is nearest (ties: the
+// lower frame index), bilinear, divided by the flat-field gain. The same arithmetic as core/render.cpp, so the
+// result is the CPU's. Frames live in slots of `pool`; cell lists (cell x cell pixels of the band) name the slots
+// that can cover a pixel, in frame order.
+extern "C" __global__ void render_band(const unsigned char* __restrict__ pool, int tw, int th,
+                                       const double* __restrict__ spx, const double* __restrict__ spy,
+                                       const int* __restrict__ sid, const int* __restrict__ cstart,
+                                       const int* __restrict__ clist, int cell, int ncx,
+                                       const float* __restrict__ flat, int has_flat, int W, int y0, int rows,
+                                       unsigned char* __restrict__ out, int* __restrict__ owner) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int yb = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= W || yb >= rows) return;
+    const int y = y0 + yb;
+    const int c = (yb / cell) * ncx + x / cell;
+    float best = 3.402823466e38f;
+    int bs = -1;
+    for (int q = cstart[c]; q < cstart[c + 1]; ++q) {
+        const int s = clist[q];
+        const double px = spx[s], py = spy[s];
+        if (x < px || y < py || x > px + (tw - 1) || y > py + (th - 1)) continue;
+        const double cx = px + 0.5 * (tw - 1), cy = py + 0.5 * (th - 1);
+        const float d = (float)((x - cx) * (x - cx) + (y - cy) * (y - cy));
+        if (d < best) { best = d; bs = s; }
+    }
+    const long long o = (long long)yb * W + x;
+    if (bs < 0) {
+        out[3 * o] = out[3 * o + 1] = out[3 * o + 2] = 0;
+        owner[o] = -1;
+        return;
+    }
+    const double sx = x - spx[bs], sy = y - spy[bs];
+    const int iy = min((int)sy, th - 2), ix = min((int)sx, tw - 2);
+    const float fy = (float)(sy - iy), fx = (float)(sx - ix);
+    const unsigned char* t = pool + (long long)bs * tw * th * 3;
+    for (int ch = 0; ch < 3; ++ch) {
+        const long long i00 = ((long long)iy * tw + ix) * 3 + ch, i01 = i00 + 3;
+        const long long i10 = i00 + (long long)tw * 3, i11 = i10 + 3;
+        float a = (float)t[i00], b = (float)t[i01], cc = (float)t[i10], dd = (float)t[i11];
+        if (has_flat) {
+            a /= fmaxf(flat[i00], 0.05f); b /= fmaxf(flat[i01], 0.05f);
+            cc /= fmaxf(flat[i10], 0.05f); dd /= fmaxf(flat[i11], 0.05f);
+        }
+        const float v = (1 - fy) * ((1 - fx) * a + fx * b) + fy * ((1 - fx) * cc + fx * dd);
+        out[3 * o + ch] = (unsigned char)fminf(fmaxf(v + 0.5f, 0.0f), 255.0f);
+    }
+    owner[o] = sid[bs];
+}
 )CUDA";
 
 }  // namespace ms::cuda

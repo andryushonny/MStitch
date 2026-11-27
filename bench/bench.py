@@ -33,7 +33,7 @@ print(f"synthetic scan {a.nx}x{a.ny}: {time.perf_counter() - t:.1f} s to make")
 prof = ms.Profile.guess("sim", 0.5, rotation_deg=0.55, flip_y=True, frame=(2592, 1944), repeatability_um=8)
 
 for mode, backend in [(m, b) for m in ("quick", "quality") for b in backends]:
-    s = ms.Session(prof, mode, threads=a.threads, backend=backend)
+    s = ms.Session(prof, mode, threads=a.threads, backend=backend, eta=False)
     t0 = time.perf_counter()
     for f in sc.frames:
         s.add(f)
@@ -56,7 +56,8 @@ for mode, backend in [(m, b) for m in ("quick", "quality") for b in backends]:
           f"render {t3 - t2:5.2f} s, "
           f"error rms {np.sqrt((np.linalg.norm(err, axis=1) ** 2).mean()):.3f} px")
     if rep.stats["backend"] == "cuda":
-        print("         " + rep.stats["backend_note"])
+        print("         registration: " + rep.stats["backend_note"])
+    print(f"         render on {s.render_backend}" + (f": {s.render_note}" if s.render_note else ""))
     for g in (30, 58):
         n_g, p_g = g * g, 2 * g * (g - 1)
         after = p_g * per_p + n_g * (t3 - t2) / n     # registration + solve + render, once the last frame is in

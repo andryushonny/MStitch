@@ -8,6 +8,8 @@ Stitching for **MControl** scans: frames and stage positions in, one large map o
 * **No double images.** Every map pixel comes from one frame (the one whose centre is nearest), so a residual error shows as a step on a seam, never as a ghost.
 * **Two passes.** After the first pass `solve()` lists the frames to take again (no reliable overlap, taken while moving, …) with a spot a quarter frame aside; the second pass adds them as extra frames.
 * **GPU and CPU together.** cuFFT computes the FFTs, cross-power spectra and peaks of a batch of pairs while the CPU cores refine the previous batch (Blattner et al. 2014). Nothing CUDA is needed to build; without a GPU it runs on the CPU.
+* **The map on the GPU too**, in bands of rows, pixel for pixel the CPU's result (same nearest-centre choice, same bilinear arithmetic).
+* **Knows how long it will take.** A linear model learns, from the user's own runs, the seconds after the last frame for a planned scan (frames, pairs, map size); MControl can show it before and during the scan. The first two runs of a setup are only remembered.
 * **Profile per objective** (4x, 10x, 20x, 50x, 100x): stage→pixel matrix (scale, rotation, mirroring), repeatability, flat-field. MControl's `prepare()` takes the frames, `mstitch.calibrate()` computes it.
 
 ## Quick start (Windows, operator PC)
@@ -44,6 +46,17 @@ with Microscope() as m:
     for cell in cv.grid(200.0): ...                   # cut the map into ~200 um cells
 ```
 
+### How long the stitching will take
+```python
+eta = ms.Eta()                                        # the user's timing history (%LOCALAPPDATA%\MStitch)
+est = eta.predict(prof, "quick", plan)                # plan: the (x, y) um MControl will visit
+print(est or "learning: no estimate for the first runs of this setup")
+...
+s = ms.Session(prof, "quick")                         # learns into the same history after render()
+print(s.eta_remaining())                              # during the scan: frames still preparing + the rest
+```
+`Estimate.seconds` is the time after the last frame; `Estimate.phases` splits it (prepare backlog, register, solve, render). The model is one linear layer, `t = W·[1, frames, pairs, map Mpx]`, weights ≥ 0, fitted in closed form on the runs of the same setup (mode, backend, frame size, GPU/CPU).
+
 ### Profile: `prepare()` in MControl, `calibrate()` here
 ```python
 def prepare(m, objective, step_um, n=3, back_um=20):
@@ -70,6 +83,7 @@ The rotation and scale come out as accurate as the stage moves: error ≈ repeat
 | `Session(profile, mode="quick"\|"quality", backend="auto"\|"cuda"\|"cpu")` | `add(frame)`, `add_image(img, x_um, y_um)`, `solve()`, `render()` |
 | `cuda.info()`, `cuda.compile_check(arch)` | the GPU MStitch would use (or why none); compile the kernels for `sm_<arch>` |
 | `Report` | `summary()`, `reshoot()`, `poses` (per frame: position, shift from the stage in px and um, pairs, best NCC), `edges`, `stats` |
+| `Eta(path=None, min_runs=2)` | `predict(profile, mode, plan_um)`, `predict_features(key, features)`, `record(...)`; `plan_features(profile, plan_um, mode)` |
 | `Canvas` | `image` (H×W×3 uint8), `owner` (frame per pixel), `to_stage(u, v)`, `to_px(x, y)`, `read(x, y, w, h)`, `grid(cell_um)`, `save(folder)` |
 
 Command line, for scans saved with `Frame.save()`:
@@ -86,7 +100,7 @@ python -m mstitch stitch FOLDER --profile profiles/10x.json --mode quick --out s
 4. **Peaks** (GPU, or CPU): normalized cross-power spectrum → inverse FFT → the 8 highest peaks. See `cuda/README.md`.
 5. **Choose** (CPU pool): each peak gives 4 candidate shifts (wrap-arounds); candidates must agree with the stage within `search_um` (default 6 × repeatability); the normalized cross-correlation (NCC) chooses, climbs to the integer maximum and a parabola gives the sub-pixel shift.
 6. **Solve**: weighted least squares over all pairs (weight NCC²) with a weak pull to the stage positions; pairs that disagree with the consensus are dropped and the solve repeats.
-7. **Render**: each map pixel from the nearest frame centre, bilinear, flat-field corrected (the profile's, or estimated from the scan's own frames).
+7. **Render** (GPU, or CPU): each map pixel from the nearest frame centre, bilinear, flat-field corrected (the profile's, or estimated from the scan's own frames). On the GPU in bands of rows: only the frames a band touches are in VRAM, a cell index tells each pixel which frames can cover it.
 
 ## Accuracy and speed (synthetic scans, known truth)
 

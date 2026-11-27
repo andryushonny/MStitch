@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "core/register.hpp"
+#include "core/render.hpp"
 
 namespace ms::cuda {
 
@@ -36,5 +37,14 @@ struct BatchStats {
 // is called from this thread; it should hand the work to other threads and return.
 void gpu_peaks(Gpu* g, const std::vector<const Tile*>& tiles, const std::vector<Edge>& edges, int k,
                const std::function<void(size_t, size_t, const std::vector<int>&)>& on_batch, BatchStats* st);
+
+struct RenderStats {
+    int bands = 0, rows_per_band = 0, slots = 0;
+    double upload_mb = 0, ms = 0;
+};
+
+// The map on the GPU, in bands of rows; the same pixels as ms::render (core/render.cpp).
+CanvasImage gpu_render(Gpu* g, const std::vector<const Tile*>& tiles, const std::vector<Vec2>& pos,
+                       const std::vector<float>& flat, double x0, double y0, int w, int h, RenderStats* st);
 
 }  // namespace ms::cuda

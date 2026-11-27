@@ -20,7 +20,7 @@
 #endif
 
 using ull = unsigned long long;
-static int g_fn[3];   // function handles: addresses of these
+static int g_fn[4];   // function handles: addresses of these
 
 EXPORT int cuInit(unsigned) { return 0; }
 EXPORT int cuDeviceGetCount(int* n) { *n = 1; return 0; }
@@ -43,7 +43,8 @@ EXPORT int cuMemcpyDtoH_v2(void* d, ull s, size_t n) { std::memcpy(d, (void*)s, 
 EXPORT int cuMemcpyDtoD_v2(ull d, ull s, size_t n) { std::memmove((void*)d, (void*)s, n); return 0; }
 EXPORT int cuModuleLoadData(void** m, const void*) { static int mod; *m = &mod; return 0; }
 EXPORT int cuModuleGetFunction(void** f, void*, const char* name) {
-    int k = !std::strcmp(name, "i16_to_f32") ? 0 : !std::strcmp(name, "cross_power") ? 1 : 2;
+    int k = !std::strcmp(name, "i16_to_f32") ? 0 : !std::strcmp(name, "cross_power") ? 1
+          : !std::strcmp(name, "topk_peaks") ? 2 : 3;
     *f = &g_fn[k];
     return 0;
 }
@@ -74,6 +75,51 @@ EXPORT int cuLaunchKernel(void* f, unsigned gx, unsigned gy, unsigned, unsigned 
                 float* o = out + 2ll * len * p + 2ll * k;
                 o[0] = m > 1e-12f ? re / m : 0.f;
                 o[1] = m > 1e-12f ? im / m : 0.f;
+            }
+    } else if (f == &g_fn[3]) {   // render_band, written like the kernel
+        auto* pool = (const unsigned char*)arg<ull>(a, 0);
+        const int tw = arg<int>(a, 1), th = arg<int>(a, 2);
+        auto* spx = (const double*)arg<ull>(a, 3);
+        auto* spy = (const double*)arg<ull>(a, 4);
+        auto* sid = (const int*)arg<ull>(a, 5);
+        auto* cstart = (const int*)arg<ull>(a, 6);
+        auto* clist = (const int*)arg<ull>(a, 7);
+        const int cell = arg<int>(a, 8), ncx = arg<int>(a, 9);
+        auto* flat = (const float*)arg<ull>(a, 10);
+        const int has_flat = arg<int>(a, 11), W = arg<int>(a, 12), y0 = arg<int>(a, 13), rows = arg<int>(a, 14);
+        auto* out = (unsigned char*)arg<ull>(a, 15);
+        auto* owner = (int*)arg<ull>(a, 16);
+        for (int yb = 0; yb < rows; ++yb)
+            for (int x = 0; x < W; ++x) {
+                const int y = y0 + yb, c = (yb / cell) * ncx + x / cell;
+                float best = 3.402823466e38f;
+                int bs = -1;
+                for (int q = cstart[c]; q < cstart[c + 1]; ++q) {
+                    const int s2 = clist[q];
+                    const double px = spx[s2], py = spy[s2];
+                    if (x < px || y < py || x > px + (tw - 1) || y > py + (th - 1)) continue;
+                    const double cx = px + 0.5 * (tw - 1), cy = py + 0.5 * (th - 1);
+                    const float d = (float)((x - cx) * (x - cx) + (y - cy) * (y - cy));
+                    if (d < best) { best = d; bs = s2; }
+                }
+                const long long o = (long long)yb * W + x;
+                if (bs < 0) { out[3 * o] = out[3 * o + 1] = out[3 * o + 2] = 0; owner[o] = -1; continue; }
+                const double sx = x - spx[bs], sy = y - spy[bs];
+                const int iy = std::min((int)sy, th - 2), ix = std::min((int)sx, tw - 2);
+                const float fy = (float)(sy - iy), fx = (float)(sx - ix);
+                const unsigned char* t = pool + (long long)bs * tw * th * 3;
+                for (int ch = 0; ch < 3; ++ch) {
+                    const long long i00 = ((long long)iy * tw + ix) * 3 + ch, i01 = i00 + 3;
+                    const long long i10 = i00 + (long long)tw * 3, i11 = i10 + 3;
+                    float va = t[i00], vb = t[i01], vc = t[i10], vd = t[i11];
+                    if (has_flat) {
+                        va /= std::max(flat[i00], 0.05f); vb /= std::max(flat[i01], 0.05f);
+                        vc /= std::max(flat[i10], 0.05f); vd /= std::max(flat[i11], 0.05f);
+                    }
+                    const float v = (1 - fy) * ((1 - fx) * va + fx * vb) + fy * ((1 - fx) * vc + fx * vd);
+                    out[3 * o + ch] = (unsigned char)std::min(std::max(v + 0.5f, 0.0f), 255.0f);
+                }
+                owner[o] = sid[bs];
             }
     } else {
         auto* r = (float*)arg<ull>(a, 0);

@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "mstitch"
-version = "0.2.2"
+version = "0.3.0"
 description = "Fast and precise stitching of microscope tile scans from MControl (C++ core, CPU and CUDA)"
 readme = "README.md"
 license = { text = "MIT" }
