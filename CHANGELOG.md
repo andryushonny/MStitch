@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+- The flat-field estimated from a scan (profile without one) is computed once per session from ≤ 24 frames
+  spread over the scan; it was recomputed on every render from up to 64 and took most of the render time.
+  `Session.flat` keeps it (save it into the profile to skip it altogether).
+- `Session.render_times`: flat-field, map, rest; bench prints them and scales only the map with the scan.
+
 ## 0.3.0
 - The map is rendered on the GPU (`render_band`): bands of rows, frames in VRAM only while a band needs them,
   a cell index per band; the same pixels as the CPU render (kernels compiled without fast math and FMA).

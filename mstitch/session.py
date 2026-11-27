@@ -74,6 +74,9 @@ class Session:
         self.report: Report | None = None
         self.eta: Eta | None = Eta() if eta is True else (eta or None)
         self.timings: dict = {}           # seconds of the last solve() / render(), by phase
+        self.render_times: dict = {}      # the last render(): flat-field estimate, map, the rest
+        self.flat: np.ndarray | None = None   # flat-field estimated from this scan (when the profile has none)
+        self.flat_level = self.level
 
     def __len__(self):
         return len(self._s)
@@ -168,18 +171,29 @@ class Session:
         n = len(s)
         idx = list(range(n))
         ready = [k for k in idx if s.tile_info(k)["ready"]]
+        t_flat = time.perf_counter()
         if isinstance(flat, str):
             shape = (s.tile_info(ready[0])["h"], s.tile_info(ready[0])["w"]) if ready else (0, 0)
             flat = self.profile.flat_at(self.level, shape)
-            if flat is None and len(ready) >= 8:
-                step = max(1, len(ready) // 64)
-                flat = s.estimate_flat(ready[::step])
+            if flat is None:
+                # estimated once per session from up to 24 frames spread over the scan (a pixel's median over
+                # 24 frames ignores dust and crystals that cover it in fewer than half of them):
+                # save it into the profile (`profile.flat = s.flat`) to skip this next time
+                if self.flat is None and len(ready) >= 8:
+                    pick = np.linspace(0, len(ready) - 1, min(24, len(ready))).round().astype(int)
+                    self.flat = s.estimate_flat([ready[i] for i in sorted(set(pick))])
+                    self.flat_level = self.level
+                flat = self.flat
+        t_map = time.perf_counter()
         pos = np.ascontiguousarray(rep.positions_px, dtype=np.float64)
         img, owner, ox, oy, used, note = s.render(idx, pos, None if flat is None else
                                                   np.ascontiguousarray(flat, np.float32), backend=self.backend)
+        t_rest = time.perf_counter()
         self.render_backend, self.render_note = used, note
         cv = Canvas(img, owner, self.level, (ox, oy), self._stage_from_px(ready, pos, ox, oy), rep.poses)
-        self.timings["render"] = time.perf_counter() - t_render
+        t_end = time.perf_counter()
+        self.render_times = {"flat": t_map - t_flat, "map": t_rest - t_map, "other": (t_flat - t_render) + (t_end - t_rest)}
+        self.timings["render"] = t_end - t_render
         self._learn(ready, img.shape)
         return cv
 

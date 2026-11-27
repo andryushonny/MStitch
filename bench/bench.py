@@ -47,6 +47,8 @@ for mode, backend in [(m, b) for m in ("quick", "quality") for b in backends]:
     t2 = time.perf_counter()
     cv = s.render()
     t3 = time.perf_counter()
+    rt = s.render_times
+    render_per_frame = (rt["map"] + rt["other"]) / len(sc.frames)
     n, pairs = len(sc.frames), len(rep.edges["i"])
     err = rep.positions_px * 2 ** s.level - sc.truth
     err -= err.mean(axis=0)
@@ -57,10 +59,14 @@ for mode, backend in [(m, b) for m in ("quick", "quality") for b in backends]:
           f"error rms {np.sqrt((np.linalg.norm(err, axis=1) ** 2).mean()):.3f} px")
     if rep.stats["backend"] == "cuda":
         print("         registration: " + rep.stats["backend_note"])
-    print(f"         render on {s.render_backend}" + (f": {s.render_note}" if s.render_note else ""))
+    rt = s.render_times
+    print(f"         render on {s.render_backend}: map {rt['map'] * 1e3:.0f} ms, flat-field estimate "
+          f"{rt['flat'] * 1e3:.0f} ms (once per session; none with a calibrated profile), other "
+          f"{rt['other'] * 1e3:.0f} ms" + (f"  [{s.render_note}]" if s.render_note else ""))
     for g in (30, 58):
         n_g, p_g = g * g, 2 * g * (g - 1)
-        after = p_g * per_p + n_g * (t3 - t2) / n     # registration + solve + render, once the last frame is in
+        r_g = n_g * render_per_frame + rt["flat"] * min(24, n_g) / min(24, n)   # the flat uses <= 24 frames
+        after = p_g * per_p + r_g      # registration + solve + render, once the last frame is in
         print(f"         {g}x{g}: {after:6.1f} s after the last frame (registration {p_g * per_p:5.1f} s, render "
-              f"{n_g * (t3 - t2) / n:5.1f} s); preparing {per_f * 1e3:.0f} ms/frame runs during the scan "
+              f"{r_g:5.1f} s); preparing {per_f * 1e3:.0f} ms/frame runs during the scan "
               f"({n_g * per_f:5.1f} s if stitching a saved scan)")
