@@ -1,19 +1,21 @@
 # MStitch
 
-Stitching for **MControl** scans: frames and stage positions in, one large map out, with the shift of every frame from where the stage said it was. C++ core, a Python module loaded into the MControl operator process (no extra server); CUDA backend next.
+Stitching for **MControl** scans: frames and stage positions in, one large map out, with the shift of every frame from where the stage said it was. C++ core, a Python module loaded into the MControl operator process (no extra server); registration on the GPU (CUDA) and the CPU at the same time.
 
 * **Any set of frames.** Pairs are found from the stage positions, not from a grid index; crosses are not needed.
 * **Exact input.** Takes MControl snaps as they come (Bayer, `lossless` or `raw`), unpacks them itself in C++ on all cores; `add()` returns at once.
 * **Two modes.** `quick` works at 1/4 size for maps of 30×30 … 58×58 frames; `quality` works at 1/2 size for small areas (≤ 15×15).
 * **No double images.** Every map pixel comes from one frame (the one whose centre is nearest), so a residual error shows as a step on a seam, never as a ghost.
 * **Two passes.** After the first pass `solve()` lists the frames to take again (no reliable overlap, taken while moving, …) with a spot a quarter frame aside; the second pass adds them as extra frames.
+* **GPU and CPU together.** cuFFT computes the FFTs, cross-power spectra and peaks of a batch of pairs while the CPU cores refine the previous batch (Blattner et al. 2014). Nothing CUDA is needed to build; without a GPU it runs on the CPU.
 * **Profile per objective** (4x, 10x, 20x, 50x, 100x): stage→pixel matrix (scale, rotation, mirroring), repeatability, flat-field. MControl's `prepare()` takes the frames, `mstitch.calibrate()` computes it.
 
 ## Quick start (Windows, operator PC)
 
 Needs Python ≥ 3.10 and the *MSVC Build Tools* (C++). CMake, zstd and pocketfft are fetched by the build.
 ```
-uv add "mstitch @ git+https://github.com/andryushonny/MStitch"
+uv add "mstitch[cuda] @ git+https://github.com/andryushonny/MStitch"     # [cuda]: NVRTC + cuFFT from pip
+uv run python -c "import mstitch; print(mstitch.cuda.info())"           # which GPU, how much memory
 ```
 ```python
 import mstitch as ms
@@ -58,7 +60,8 @@ The rotation and scale come out as accurate as the stage moves: error ≈ repeat
 | `Profile.guess(objective, um_per_px, rotation_deg, flip_x, flip_y)` | nominal profile before calibration |
 | `Profile.load(path)`, `.save(path)` | `name.json` + `name.flat.npy` |
 | `calibrate(frames, objective)` | frames: MControl `Frame`s or `(image, x_um, y_um)` |
-| `Session(profile, mode="quick"\|"quality")` | `add(frame)`, `add_image(img, x_um, y_um)`, `solve()`, `render()` |
+| `Session(profile, mode="quick"\|"quality", backend="auto"\|"cuda"\|"cpu")` | `add(frame)`, `add_image(img, x_um, y_um)`, `solve()`, `render()` |
+| `cuda.info()`, `cuda.compile_check(arch)` | the GPU MStitch would use (or why none); compile the kernels for `sm_<arch>` |
 | `Report` | `summary()`, `reshoot()`, `poses` (per frame: position, shift from the stage in px and um, pairs, best NCC), `edges`, `stats` |
 | `Canvas` | `image` (H×W×3 uint8), `owner` (frame per pixel), `to_stage(u, v)`, `to_px(x, y)`, `read(x, y, w, h)`, `grid(cell_um)`, `save(folder)` |
 
@@ -73,9 +76,10 @@ python -m mstitch stitch FOLDER --profile profiles/10x.json --mode quick --out s
 1. **Unpack** (C++, all cores): zstd → undo MControl's same-colour difference → 2×2 Bayer superpixel (exact, no interpolation) → 1/2 or 1/4 size.
 2. **Prepare**: grey divided by its local mean (removes vignetting and illumination), zero mean.
 3. **Pairs**: every two frames whose stage positions overlap. Each frame's FFT is computed once and freed after its last pair (as in Blattner et al. 2014).
-4. **Register**: phase correlation gives candidate shifts (8 peaks × 4 wrap-arounds); candidates must agree with the stage within `search_um` (default 6 × repeatability); the normalized cross-correlation (NCC) chooses, climbs to the integer maximum and a parabola gives the sub-pixel shift.
-5. **Solve**: weighted least squares over all pairs (weight NCC²) with a weak pull to the stage positions; pairs that disagree with the consensus are dropped and the solve repeats.
-6. **Render**: each map pixel from the nearest frame centre, bilinear, flat-field corrected (the profile's, or estimated from the scan's own frames).
+4. **Peaks** (GPU, or CPU): normalized cross-power spectrum → inverse FFT → the 8 highest peaks. See `cuda/README.md`.
+5. **Choose** (CPU pool): each peak gives 4 candidate shifts (wrap-arounds); candidates must agree with the stage within `search_um` (default 6 × repeatability); the normalized cross-correlation (NCC) chooses, climbs to the integer maximum and a parabola gives the sub-pixel shift.
+6. **Solve**: weighted least squares over all pairs (weight NCC²) with a weak pull to the stage positions; pairs that disagree with the consensus are dropped and the solve repeats.
+7. **Render**: each map pixel from the nearest frame centre, bilinear, flat-field corrected (the profile's, or estimated from the scan's own frames).
 
 ## Accuracy and speed (synthetic scans, known truth)
 
@@ -84,7 +88,9 @@ python -m mstitch stitch FOLDER --profile profiles/10x.json --mode quick --out s
 | quick, 1/4 size | 0.05 |
 | quality, 1/2 size | 0.007 |
 
-Synthetic frames carry vignetting, sensor noise, dust and crystals and a stage that lands ±20 px off target; real frames will be worse by whatever the optics add (distortion: next milestone). Time per stage on full 2592×1944 frames: `python bench/bench.py` (prints ms per frame and per pair and the estimate for 30×30 and 58×58). On a 2-core cloud VM, CPU only: quick ≈ 15 ms per frame and 7 ms per pair; the CUDA backend is there to cut the per-pair part.
+Synthetic frames carry vignetting, sensor noise, dust and crystals and a stage that lands ±20 px off target; real frames will be worse by whatever the optics add (distortion: next milestone). The GPU path gives the same shifts as the CPU path (tests).
+
+Time per stage on full 2592×1944 frames, CPU and GPU side by side: `python bench/bench.py` (ms per frame and per pair, estimate for 30×30 and 58×58). On a 2-core cloud VM, CPU only: quick ≈ 15 ms per frame and 9 ms per pair, quality ≈ 26 and 38 ms.
 
 ## Layout
 
@@ -93,14 +99,16 @@ Synthetic frames carry vignetting, sensor noise, dust and crystals and a stage t
 | `io/` | frames from MControl: unpacking, Bayer → RGB at a level |
 | `core/` | tiles, pair registration, global solve, render, session, thread pool |
 | `cpu/` | FFT on the CPU (pocketfft) |
-| `cuda/` | CUDA backend (planned: see `cuda/README.md`) |
+| `cuda/` | CUDA backend: run-time loading, NVRTC kernels, batches and spectrum cache (`cuda/README.md`) |
 | `features/` | automatic search of features for the quality mode (planned) |
 | `bindings/` | the Python module `mstitch._core` (nanobind) |
 | `mstitch/` | the Python package |
-| `tests/`, `bench/` | synthetic scans packed exactly like MControl; benchmarks |
+| `tests/`, `bench/` | synthetic scans packed exactly like MControl; a fake CUDA driver for the GPU path; benchmarks |
 
 ## Build and test
 ```
-uv run --with pytest --with zstandard pytest      # or: pip install -e .[test] && pytest
+cd tests && uv run --with pytest --with zstandard pytest     # GPU tests run when there is a GPU
+cmake -S . -B build/mock -DMSTITCH_MOCK_CUDA=ON && cmake --build build/mock --target mock_cuda
+MSTITCH_MOCK_CUDA=build/mock/libmock_cuda.so pytest tests     # the GPU path on a fake driver
 cmake -S . -B build -DMSTITCH_PYTHON=ON && cmake --build build   # C++ only
 ```

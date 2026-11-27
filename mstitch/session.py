@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from . import _core
+from . import cuda as _cuda
 from .canvas import Canvas
 from .profile import Profile
 
@@ -39,7 +40,8 @@ class Report:
         n = len(self.poses)
         bad = sum(1 for p in self.poses if p["reshoot"])
         return (f"{n} frames, pairs used {self.stats['pairs_used']} (dropped {self.stats['pairs_dropped']}), "
-                f"rms {self.stats['rms_px'] * 2 ** self.level:.2f} px full-res, to reshoot: {bad}")
+                f"rms {self.stats['rms_px'] * 2 ** self.level:.2f} px full-res, to reshoot: {bad}, "
+                f"registration on {self.stats.get('backend', '?')}")
 
 
 class Session:
@@ -50,9 +52,16 @@ class Session:
     >>> rep = s.solve(); cv = s.render(); cv.save("scans/chip7")
     """
 
-    def __init__(self, profile: Profile, mode: str = "quick", level: int | None = None, threads: int = 0):
+    def __init__(self, profile: Profile, mode: str = "quick", level: int | None = None, threads: int = 0,
+                 backend: str = "auto"):
+        """backend: 'auto' (GPU when there is one, else CPU), 'cuda' (GPU or an error), 'cpu'."""
         if mode not in MODES:
             raise ValueError(f"mode must be one of {list(MODES)}")
+        if backend not in ("auto", "cuda", "cpu"):
+            raise ValueError("backend must be auto, cuda or cpu")
+        if backend != "cpu":
+            _cuda.load()
+        self.backend = backend
         self.profile = profile
         self.mode = mode
         self.level = MODES[mode] if level is None else level
@@ -90,8 +99,10 @@ class Session:
         if search_um is None:
             search_um = 6 * self.profile.repeatability_um
         search_px = max(4.0, search_um / self.profile.um_per_px / scale)
-        s.register(search_px, True, 8, min_overlap)
+        s.register(search_px, True, 8, min_overlap, self.backend)
+        stats_backend = {"backend": s.backend_used, "backend_note": s.backend_note}
         pos, stats, edges = s.solve(1e-3, min_ncc, 1.5, 5)
+        stats.update(stats_backend)
         pred = s.predicted()
         self.report = Report(pos, pred, edges, stats, self._poses(infos, pos, pred, edges, min_ncc), self.level)
         return self.report

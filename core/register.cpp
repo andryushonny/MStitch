@@ -43,34 +43,39 @@ double parabola(double m, double z, double p) {
 }
 }  // namespace
 
-void register_pair(const Tile& a, const Tile& b, const Spectrum& fa, const Spectrum& fb, Edge& e,
-                   const RegParams& p) {
-    e.found = false;
-    if (a.w != b.w || a.h != b.h) return;
-    const int H = a.h, W = a.w;
-    // Normalized cross-power spectrum -> correlation surface; its peak sits at t mod (W, H).
+void correlation_peaks(const Spectrum& fa, const Spectrum& fb, int k, int* peaks) {
+    const int H = fa.h, W = fa.w;
     Spectrum c;
     c.h = H;
     c.w = W;
     c.c.resize(fa.c.size());
-    for (size_t k = 0; k < c.c.size(); ++k) {
-        cf v = fa.c[k] * std::conj(fb.c[k]);
+    for (size_t q = 0; q < c.c.size(); ++q) {
+        cf v = fa.c[q] * std::conj(fb.c[q]);
         const float m = std::abs(v);
-        c.c[k] = m > 1e-12f ? v / m : cf(0, 0);
+        c.c[q] = m > 1e-12f ? v / m : cf(0, 0);
     }
     std::vector<float> r(size_t(H) * W);
     fft_inverse(c, r.data());
+    for (int i = 0; i < k; ++i) {
+        const size_t im = size_t(std::max_element(r.begin(), r.end()) - r.begin());
+        peaks[i] = int(im);
+        const int u = int(im / W), v = int(im % W);
+        for (int dy = -3; dy <= 3; ++dy)  // suppress this peak (wrapping)
+            for (int dx = -3; dx <= 3; ++dx)
+                r[size_t((u + dy + H) % H) * W + (v + dx + W) % W] = -3.0e38f;
+    }
+}
 
+void choose_from_peaks(const Tile& a, const Tile& b, const int* peaks, int k, Edge& e, const RegParams& p) {
+    e.found = false;
+    if (a.w != b.w || a.h != b.h) return;
+    const int H = a.h, W = a.w;
     const long min_n = long(p.min_overlap * double(W) * double(H));
     double best = -2;
     int bx = 0, by = 0;
     long bn = 0;
-    for (int k = 0; k < p.peaks; ++k) {
-        size_t im = size_t(std::max_element(r.begin(), r.end()) - r.begin());
-        const int u = int(im / W), v = int(im % W);
-        for (int dy = -3; dy <= 3; ++dy)  // suppress this peak (wrapping)
-            for (int dx = -3; dx <= 3; ++dx)
-                r[size_t((u + dy + H) % H) * W + (v + dx + W) % W] = -1e30f;
+    for (int q = 0; q < k; ++q) {
+        const int u = peaks[q] / W, v = peaks[q] % W;   // the correlation peak sits at t mod (W, H)
         for (int ty : {u, u - H})
             for (int tx : {v, v - W}) {
                 if (p.gated && (std::abs(tx - e.pred_x) > p.search_px || std::abs(ty - e.pred_y) > p.search_px))
@@ -103,6 +108,15 @@ void register_pair(const Tile& a, const Tile& b, const Spectrum& fa, const Spect
     e.ncc = best;
     e.overlap = bn;
     e.found = true;
+}
+
+void register_pair(const Tile& a, const Tile& b, const Spectrum& fa, const Spectrum& fb, Edge& e,
+                   const RegParams& p) {
+    e.found = false;
+    if (a.w != b.w || a.h != b.h) return;
+    std::vector<int> peaks(p.peaks);
+    correlation_peaks(fa, fb, p.peaks, peaks.data());
+    choose_from_peaks(a, b, peaks.data(), p.peaks, e, p);
 }
 
 }  // namespace ms

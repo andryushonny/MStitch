@@ -35,7 +35,11 @@ public:
     // Stage-predicted top-left of each frame at the working level (frame centre = stage position).
     std::vector<Vec2> predicted() const;
     // Find overlapping pairs (from the stage prediction, or all pairs when !p.gated) and register them.
-    const std::vector<Edge>& register_pairs(const RegParams& p);
+    // backend: "cpu", "cuda" (fails without a GPU) or "auto" (GPU when there is one).
+    const std::vector<Edge>& register_pairs(const RegParams& p, const std::string& backend = "auto");
+    // What the last registration ran on, and why (GPU name, batches, or the reason for the CPU).
+    const std::string& backend_used() const { return backend_used_; }
+    const std::string& backend_note() const { return backend_note_; }
     const std::vector<Edge>& edges() const { return edges_; }
     std::vector<Edge>& edges_mut() { return edges_; }
 
@@ -49,6 +53,10 @@ private:
     std::vector<std::unique_ptr<Tile>> tiles_;
     std::mutex add_m_;
     std::vector<Edge> edges_;
+    std::string backend_used_, backend_note_;
+
+    void register_cpu(const RegParams& p);
+    void register_gpu(const RegParams& p, void* gpu);
 };
 
 }  // namespace ms

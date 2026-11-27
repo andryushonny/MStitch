@@ -26,6 +26,11 @@ struct RegParams {
 };
 
 void tile_spectrum(const Tile& t, Spectrum& out);
+// The k highest peaks of the phase correlation of two spectra (index y * w + x), as the GPU computes them.
+void correlation_peaks(const Spectrum& fa, const Spectrum& fb, int k, int* peaks);
+// From the peaks: candidates (4 wrap-arounds each), stage gate, NCC choice, climb, sub-pixel. Fills e.
+void choose_from_peaks(const Tile& a, const Tile& b, const int* peaks, int k, Edge& e, const RegParams& p);
+// Both of the above on the CPU.
 void register_pair(const Tile& a, const Tile& b, const Spectrum& fa, const Spectrum& fb, Edge& e,
                    const RegParams& p);
 // NCC of b against a at integer offset (tx, ty); overlap pixel count in *n.

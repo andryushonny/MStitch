@@ -8,7 +8,6 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-option(MSTITCH_CUDA "Build the CUDA backend (cuda/)" OFF)
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET ON)
@@ -38,20 +37,28 @@ add_library(mstitch_lib STATIC
   core/register.cpp
   core/solve.cpp
   core/render.cpp
-  core/session.cpp)
+  core/session.cpp
+  cuda/api.cpp
+  cuda/gpu.cpp)
 target_include_directories(mstitch_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${pocketfft_SOURCE_DIR}
   ${zstd_SOURCE_DIR}/lib)
 target_link_libraries(mstitch_lib PUBLIC libzstd_static)
 find_package(Threads REQUIRED)
-target_link_libraries(mstitch_lib PUBLIC Threads::Threads)
+target_link_libraries(mstitch_lib PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 if(MSVC)
   target_compile_options(mstitch_lib PRIVATE /O2 /fp:fast /W3)
 else()
   target_compile_options(mstitch_lib PRIVATE -O3 -Wall)
 endif()
 
-if(MSTITCH_CUDA)
-  message(FATAL_ERROR "The CUDA backend is not written yet: see cuda/README.md")
+# CUDA needs nothing at build time: the driver, NVRTC and cuFFT are loaded at run time (cuda/api.cpp).
+
+# Fake CUDA driver + cuFFT on the CPU, for testing the GPU path without a GPU (tests/test_cuda.py)
+option(MSTITCH_MOCK_CUDA "Build tests/mock_cuda" OFF)
+if(MSTITCH_MOCK_CUDA)
+  add_library(mock_cuda SHARED tests/mock_cuda/mock_cuda.cpp)
+  target_include_directories(mock_cuda PRIVATE ${pocketfft_SOURCE_DIR})
+  set_target_properties(mock_cuda PROPERTIES CXX_VISIBILITY_PRESET hidden)
 endif()
 
 # Python module mstitch._core

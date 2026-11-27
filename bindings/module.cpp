@@ -9,6 +9,8 @@
 #include <cstring>
 
 #include "core/session.hpp"
+#include "cuda/api.hpp"
+#include "cuda/gpu.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -114,16 +116,18 @@ NB_MODULE(_core, m) {
                  return to_numpy(std::move(v), {p.size(), 2});
              })
         .def("register",
-             [](ms::Session& s, double search_px, bool gated, int peaks, double min_overlap) {
+             [](ms::Session& s, double search_px, bool gated, int peaks, double min_overlap, std::string backend) {
                  ms::RegParams p;
                  p.search_px = search_px; p.gated = gated; p.peaks = peaks; p.min_overlap = min_overlap;
                  {
                      nb::gil_scoped_release r;
-                     s.register_pairs(p);
+                     s.register_pairs(p, backend);
                  }
                  return edges_dict(s.edges());
              },
-             "search_px"_a, "gated"_a = true, "peaks"_a = 8, "min_overlap"_a = 0.03)
+             "search_px"_a, "gated"_a = true, "peaks"_a = 8, "min_overlap"_a = 0.03, "backend"_a = "auto")
+        .def_prop_ro("backend_used", &ms::Session::backend_used)
+        .def_prop_ro("backend_note", &ms::Session::backend_note)
         .def("edges", [](const ms::Session& s) { return edges_dict(s.edges()); })
         .def("solve",
              [](ms::Session& s, double prior_weight, double min_ncc, double outlier_px, int rounds) {
@@ -181,4 +185,30 @@ NB_MODULE(_core, m) {
                                        c.ox, c.oy);
              },
              "idx"_a, "pos"_a, "flat"_a.none(), "x0"_a = 0.0, "y0"_a = 0.0, "w"_a = 0, "h"_a = 0);
+
+    m.def("cuda_load", &ms::cuda::load, "driver"_a, "nvrtc"_a, "cufft"_a,
+          "Load the CUDA driver, NVRTC and cuFFT from the first path that opens in each list.");
+    m.def("cuda_device", []() -> nb::object {
+        std::string why;
+        ms::cuda::Gpu* g;
+        {
+            nb::gil_scoped_release r;
+            g = ms::cuda::gpu(&why);
+        }
+        nb::dict d;
+        if (!g) {
+            d["ok"] = false;
+            d["why"] = why;
+            return d;
+        }
+        auto dev = ms::cuda::device_info(g);
+        d["ok"] = true;
+        d["name"] = dev.name;
+        d["cc"] = nb::make_tuple(dev.cc_major, dev.cc_minor);
+        d["free_mb"] = double(dev.free_bytes) / 1e6;
+        d["total_mb"] = double(dev.total_bytes) / 1e6;
+        return d;
+    });
+    m.def("cuda_compile_check", &ms::cuda::compile_check, "arch"_a,
+          "Compile the kernels for sm_<arch> with NVRTC only (no GPU needed): '' when fine, else the log.");
 }

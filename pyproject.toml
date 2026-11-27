@@ -4,8 +4,8 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "mstitch"
-version = "0.1.0"
-description = "Fast and precise stitching of microscope tile scans from MControl (C++, CPU now, CUDA next)"
+version = "0.2.0"
+description = "Fast and precise stitching of microscope tile scans from MControl (C++ core, CPU and CUDA)"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -13,6 +13,7 @@ dependencies = ["numpy>=1.24", "pillow>=10"]
 
 [project.optional-dependencies]
 test = ["pytest>=8", "zstandard>=0.22"]
+cuda = ["nvidia-cufft-cu12", "nvidia-cuda-nvrtc-cu12"]
 
 [tool.scikit-build]
 minimum-version = "0.10"
