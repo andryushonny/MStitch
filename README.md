@@ -12,10 +12,17 @@ Stitching for **MControl** scans: frames and stage positions in, one large map o
 
 ## Quick start (Windows, operator PC)
 
-Needs Python ≥ 3.10 and the *MSVC Build Tools* (C++). CMake, zstd and pocketfft are fetched by the build.
+Needs Python ≥ 3.10 and the *Visual Studio Build Tools* with "Desktop development with C++". CMake, zstd and pocketfft are fetched by the build.
+
+In the operator's project (the one that uses `mcontrol`):
 ```
 uv add "mstitch[cuda] @ git+https://github.com/andryushonny/MStitch"     # [cuda]: NVRTC + cuFFT from pip
 uv run python -c "import mstitch; print(mstitch.cuda.info())"           # which GPU, how much memory
+```
+Inside a clone of MStitch itself (development, tests, bench) do not `uv add` it; build it in place:
+```
+uv sync --extra cuda --extra test
+uv run python -c "import mstitch; print(mstitch.cuda.info())"
 ```
 ```python
 import mstitch as ms

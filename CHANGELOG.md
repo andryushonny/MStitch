@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+- Windows: the module links the C++ runtime statically (MSVC `/MT`, MinGW `-static`), so it needs no
+  msvcp140 / libstdc++ DLLs; when `_core` still fails to load, the error lists the DLLs it cannot find.
+
 ## 0.2.0
 - CUDA backend: batched cuFFT for the frame FFTs, cross-power spectra and inverse FFTs, top-8 peaks on the GPU;
   the CPU refines the previous batch at the same time. Spectra cached in VRAM, freed after their last pair,

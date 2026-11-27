@@ -9,6 +9,10 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 
+# No C++ runtime DLLs next to the module: Python on Windows does not look for them on PATH, and a missing
+# msvcp140.dll / libstdc++-6.dll gives "DLL load failed while importing _core".
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+
 include(FetchContent)
 set(FETCHCONTENT_QUIET ON)
 
@@ -69,5 +73,8 @@ if(SKBUILD OR MSTITCH_PYTHON)
   find_package(nanobind CONFIG REQUIRED)
   nanobind_add_module(_core NB_STATIC bindings/module.cpp)
   target_link_libraries(_core PRIVATE mstitch_lib)
+  if(MINGW)
+    target_link_options(_core PRIVATE -static)
+  endif()
   install(TARGETS _core LIBRARY DESTINATION mstitch)
 endif()
