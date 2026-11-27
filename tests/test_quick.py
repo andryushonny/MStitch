@@ -119,7 +119,12 @@ def test_map_parts_equal_the_whole(tmp_path):
     man = json.loads((tmp_path / "m" / "manifest.json").read_text())
     for t in man["tiles"][:6]:
         a = np.asarray(Image.open(tmp_path / "m" / t["file"]))
-        assert (a == img[t["y"]:t["y"] + a.shape[0], t["x"]:t["x"] + a.shape[1]]).all()
+        assert a.shape[2] == 4
+        cut = img[t["y"]:t["y"] + a.shape[0], t["x"]:t["x"] + a.shape[1]]
+        assert (a[..., :3] == cut).all()
+        # transparent exactly where no frame reaches
+        o = own[t["y"]:t["y"] + a.shape[0], t["x"]:t["x"] + a.shape[1]]
+        assert ((a[..., 3] == 0) == (o < 0)).all()
 
 
 def test_objects_are_whole_from_one_frame():

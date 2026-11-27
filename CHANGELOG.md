@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+- Saved map tiles are RGBA: transparent where no frame reaches (the map's ragged edges). Before they were black and
+  covered whatever lay under the map (black strips between selections in MControl).
+
 ## 0.5.0
 - Seams around objects, not through them (`render(seams="objects")`, the default; CLI `--seams objects|voronoi`):
   objects on the sample (crystals, crosses, flakes, dust: above 6 noise sigma over the frame's local background,

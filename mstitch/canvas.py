@@ -130,7 +130,10 @@ class Canvas:
                 if not self.covered(x0, y0, w, h):
                     continue
                 name = f"tiles/{ty}_{tx}.png"
-                Image.fromarray(np.ascontiguousarray(self.region(x0, y0, w, h))).save(folder / name)
+                # RGBA: where no frame reaches, transparent (else it is black and covers what lies under the map)
+                img, own = self.region(x0, y0, w, h, owner=True)
+                rgba = np.dstack([img, np.where(own >= 0, 255, 0).astype(np.uint8)])
+                Image.fromarray(np.ascontiguousarray(rgba), "RGBA").save(folder / name)
                 names.append({"file": name, "x": x0, "y": y0})
         (folder / "manifest.json").write_text(json.dumps({
             "size": [W, H], "level": self.level, "origin": [float(v) for v in self.origin], "um_per_px": self.um_per_px,
