@@ -58,5 +58,8 @@ for mode, backend in [(m, b) for m in ("quick", "quality") for b in backends]:
     if rep.stats["backend"] == "cuda":
         print("         " + rep.stats["backend_note"])
     for g in (30, 58):
-        est = g * g * per_f + 2 * g * (g - 1) * per_p
-        print(f"         {g}x{g}: about {est:6.1f} s after the last frame if nothing ran during the scan")
+        n_g, p_g = g * g, 2 * g * (g - 1)
+        after = p_g * per_p + n_g * (t3 - t2) / n     # registration + solve + render, once the last frame is in
+        print(f"         {g}x{g}: {after:6.1f} s after the last frame (registration {p_g * per_p:5.1f} s, render "
+              f"{n_g * (t3 - t2) / n:5.1f} s); preparing {per_f * 1e3:.0f} ms/frame runs during the scan "
+              f"({n_g * per_f:5.1f} s if stitching a saved scan)")
