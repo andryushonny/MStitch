@@ -375,7 +375,7 @@ CanvasImage gpu_render(Gpu* g, const std::vector<const Tile*>& tiles, const std:
                 const int s = free_slots.back();
                 free_slots.pop_back();
                 slot_of[k] = s;
-                hpx[s] = px[k]; hpy[s] = py[k]; hsid[s] = k;
+                hpx[s] = px[k]; hpy[s] = py[k]; hsid[s] = tiles[k]->id;
                 check(a.cuMemcpyHtoD(pool.p + CUdeviceptr(s) * tile_bytes, tiles[k]->rgb.data(), tile_bytes),
                       "upload frame");
                 stats.upload_mb += double(tile_bytes) / 1e6;

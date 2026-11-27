@@ -46,6 +46,7 @@ for mode, backend in [(m, b) for m in ("quick", "quality") for b in backends]:
     rep = s.solve()              # again: cuFFT plans and caches are warm
     t2 = time.perf_counter()
     cv = s.render()
+    cv.image                     # render the whole map (normally done in parts, on demand)
     t3 = time.perf_counter()
     rt = s.render_times
     render_per_frame = (rt["map"] + rt["other"]) / len(sc.frames)
@@ -63,10 +64,12 @@ for mode, backend in [(m, b) for m in ("quick", "quality") for b in backends]:
     print(f"         render on {s.render_backend}: map {rt['map'] * 1e3:.0f} ms, flat-field estimate "
           f"{rt['flat'] * 1e3:.0f} ms (once per session; none with a calibrated profile), other "
           f"{rt['other'] * 1e3:.0f} ms" + (f"  [{s.render_note}]" if s.render_note else ""))
+    print(f"         the map is usable {(rt['flat'] + rt['other']) * 1e3:.0f} ms after solve(); its pixels "
+          f"render on demand (whole map: {rt['map'] * 1e3:.0f} ms here)")
     for g in (30, 58):
         n_g, p_g = g * g, 2 * g * (g - 1)
         r_g = n_g * render_per_frame + rt["flat"] * min(24, n_g) / min(24, n)   # the flat uses <= 24 frames
         after = p_g * per_p + r_g      # registration + solve + render, once the last frame is in
-        print(f"         {g}x{g}: {after:6.1f} s after the last frame (registration {p_g * per_p:5.1f} s, render "
-              f"{r_g:5.1f} s); preparing {per_f * 1e3:.0f} ms/frame runs during the scan "
+        print(f"         {g}x{g}: {after:6.1f} s after the last frame (registration {p_g * per_p:5.1f} s, whole map "
+              f"{r_g:5.1f} s if rendered at once); preparing {per_f * 1e3:.0f} ms/frame runs during the scan "
               f"({n_g * per_f:5.1f} s if stitching a saved scan)")

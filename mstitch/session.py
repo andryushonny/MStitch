@@ -162,18 +162,19 @@ class Session:
 
     # --- canvas out
     def render(self, flat: np.ndarray | None | str = "auto") -> Canvas:
-        """The mosaic at the working level. flat: 'auto' = the profile's, else estimated from these frames
-        (needs >= 8 frames); None = no correction; or an HxWx3 gain."""
+        """The map at the working level, rendered on demand (see Canvas). flat: 'auto' = the profile's, else
+        estimated from these frames (needs >= 8 frames); None = no correction; or an HxWx3 gain."""
         if self.report is None:
             self.solve()
         t_render = time.perf_counter()
         s, rep = self._s, self.report
         n = len(s)
         idx = list(range(n))
-        ready = [k for k in idx if s.tile_info(k)["ready"]]
+        infos = [s.tile_info(k) for k in idx]
+        ready = [k for k in idx if infos[k]["ready"]]
         t_flat = time.perf_counter()
         if isinstance(flat, str):
-            shape = (s.tile_info(ready[0])["h"], s.tile_info(ready[0])["w"]) if ready else (0, 0)
+            shape = (infos[ready[0]]["h"], infos[ready[0]]["w"]) if ready else (0, 0)
             flat = self.profile.flat_at(self.level, shape)
             if flat is None:
                 # estimated once per session from up to 24 frames spread over the scan (a pixel's median over
@@ -184,17 +185,35 @@ class Session:
                     self.flat = s.estimate_flat([ready[i] for i in sorted(set(pick))])
                     self.flat_level = self.level
                 flat = self.flat
-        t_map = time.perf_counter()
+        t_box = time.perf_counter()
         pos = np.ascontiguousarray(rep.positions_px, dtype=np.float64)
-        img, owner, ox, oy, used, note = s.render(idx, pos, None if flat is None else
-                                                  np.ascontiguousarray(flat, np.float32), backend=self.backend)
-        t_rest = time.perf_counter()
-        self.render_backend, self.render_note = used, note
-        cv = Canvas(img, owner, self.level, (ox, oy), self._stage_from_px(ready, pos, ox, oy), rep.poses)
+        flat32 = None if flat is None else np.ascontiguousarray(flat, np.float32)
+        # the map's box: whole pixels around all frames (as core/render.cpp computes it)
+        if ready:
+            x0 = float(np.floor(min(pos[k][0] for k in ready)))
+            y0 = float(np.floor(min(pos[k][1] for k in ready)))
+            W = int(np.ceil(max(pos[k][0] + infos[k]["w"] for k in ready) - x0))
+            H = int(np.ceil(max(pos[k][1] + infos[k]["h"] for k in ready) - y0))
+        else:
+            x0 = y0 = 0.0
+            W = H = 0
+        rects = [(pos[k][0] - x0, pos[k][1] - y0, infos[k]["w"], infos[k]["h"]) for k in ready]
+        self.render_backend, self.render_note = None, ""
+
+        def renderer(rx, ry, rw, rh):
+            t = time.perf_counter()
+            img, owner, _, _, used, note = s.render(idx, pos, flat32, float(rx), float(ry), int(rw), int(rh),
+                                                    backend=self.backend)
+            self.render_backend, self.render_note = used, note
+            self.render_times["map"] = self.render_times.get("map", 0.0) + time.perf_counter() - t
+            return img, owner
+
+        cv = Canvas(renderer, (x0, y0), (W, H), self.level, self._stage_from_px(ready, pos, x0, y0), rep.poses,
+                    rects)
         t_end = time.perf_counter()
-        self.render_times = {"flat": t_map - t_flat, "map": t_rest - t_map, "other": (t_flat - t_render) + (t_end - t_rest)}
-        self.timings["render"] = t_end - t_render
-        self._learn(ready, img.shape)
+        self.render_times = {"flat": t_box - t_flat, "map": 0.0, "other": (t_flat - t_render) + (t_end - t_box)}
+        self.timings["render"] = t_end - t_render       # until the map can be used; pixels come on demand
+        self._learn(ready, (H, W))
         return cv
 
     # --- how long it takes (eta.py)

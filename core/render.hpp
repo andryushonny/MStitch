@@ -12,7 +12,7 @@ struct CanvasImage {
     int w = 0, h = 0;
     double ox = 0, oy = 0;          // canvas pixel (0, 0) is at this position (working level)
     std::vector<uint8_t> rgb;       // w*h*3
-    std::vector<int32_t> owner;     // index of the frame each pixel came from, -1 = none
+    std::vector<int32_t> owner;     // frame (Tile::id) each pixel came from, -1 = none
 };
 
 // Bounding box of all frames when w <= 0 (whole pixels), else the given region.

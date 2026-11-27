@@ -65,6 +65,8 @@ MOCK_SCRIPT = textwrap.dedent("""
             s.add(f)
         rep = s.solve()
         cv = s.render()
+        W, H = cv.size
+        np.save({here!r} + f"/_mock_{{b}}_part.npy", cv.region(W // 3, H // 4, 300, 200))
         np.save({here!r} + f"/_mock_{{b}}_img.npy", cv.image)
         np.save({here!r} + f"/_mock_{{b}}_owner.npy", cv.owner)
         out[b] = dict(render=s.render_backend, render_note=s.render_note, t=rep.edges["t"].tolist(), ncc=rep.edges["ncc"].tolist(), found=rep.edges["found"].tolist(),
@@ -102,6 +104,9 @@ def test_gpu_path_on_mock_matches_cpu(mode, max_slots):
     print(g["render_note"])
     ic, ig = np.load(HERE / "_mock_cpu_img.npy"), np.load(HERE / "_mock_cuda_img.npy")
     oc, og = np.load(HERE / "_mock_cpu_owner.npy"), np.load(HERE / "_mock_cuda_owner.npy")
+    part = np.load(HERE / "_mock_cuda_part.npy")      # a part rendered alone on the "GPU"
+    H, W = ic.shape[:2]
+    assert (part == ic[H // 4:H // 4 + part.shape[0], W // 3:W // 3 + part.shape[1]]).all()
     for f in HERE.glob("_mock_*.npy"):
         f.unlink()
     assert ic.shape == ig.shape and (ic == ig).all() and (oc == og).all()

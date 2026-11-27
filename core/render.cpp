@@ -73,7 +73,7 @@ CanvasImage render(const std::vector<const Tile*>& tiles, const std::vector<Vec2
                                         fy * ((1 - fx) * at(iy + 1, ix) + fx * at(iy + 1, ix + 1));
                         out[ch] = uint8_t(std::clamp(v + 0.5f, 0.0f, 255.0f));
                     }
-                    c.owner[size_t(y) * w + x] = int32_t(k);
+                    c.owner[size_t(y) * w + x] = int32_t(t.id);
                 }
             }
         }

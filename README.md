@@ -8,7 +8,7 @@ Stitching for **MControl** scans: frames and stage positions in, one large map o
 * **No double images.** Every map pixel comes from one frame (the one whose centre is nearest), so a residual error shows as a step on a seam, never as a ghost.
 * **Two passes.** After the first pass `solve()` lists the frames to take again (no reliable overlap, taken while moving, …) with a spot a quarter frame aside; the second pass adds them as extra frames.
 * **GPU and CPU together.** cuFFT computes the FFTs, cross-power spectra and peaks of a batch of pairs while the CPU cores refine the previous batch (Blattner et al. 2014). Nothing CUDA is needed to build; without a GPU it runs on the CPU.
-* **The map on the GPU too**, in bands of rows, pixel for pixel the CPU's result (same nearest-centre choice, same bilinear arithmetic).
+* **The map on demand, on the GPU.** `render()` returns as soon as the frames are placed; each part MControl asks for (`region`, `read`, `grid` cells, `save` tiles) is rendered then, on the GPU, pixel for pixel the CPU's result. A 58×58 map never sits in RAM whole.
 * **Knows how long it will take.** A linear model learns, from the user's own runs, the seconds after the last frame for a planned scan (frames, pairs, map size); MControl can show it before and during the scan. The first two runs of a setup are only remembered.
 * **Profile per objective** (4x, 10x, 20x, 50x, 100x): stage→pixel matrix (scale, rotation, mirroring), repeatability, flat-field. MControl's `prepare()` takes the frames, `mstitch.calibrate()` computes it.
 
@@ -84,7 +84,7 @@ The rotation and scale come out as accurate as the stage moves: error ≈ repeat
 | `cuda.info()`, `cuda.compile_check(arch)` | the GPU MStitch would use (or why none); compile the kernels for `sm_<arch>` |
 | `Report` | `summary()`, `reshoot()`, `poses` (per frame: position, shift from the stage in px and um, pairs, best NCC), `edges`, `stats` |
 | `Eta(path=None, min_runs=2)` | `predict(profile, mode, plan_um)`, `predict_features(key, features)`, `record(...)`; `plan_features(profile, plan_um, mode)` |
-| `Canvas` | `image` (H×W×3 uint8), `owner` (frame per pixel), `to_stage(u, v)`, `to_px(x, y)`, `read(x, y, w, h)`, `grid(cell_um)`, `save(folder)` |
+| `Canvas` | `region(x, y, w, h)`, `read(x_um, y_um, w_um, h_um)`, `grid(cell_um)`, `save(folder)` render their part on demand; `image` / `owner` the whole map; `to_stage(u, v)`, `to_px(x, y)`, `covered(...)`, `size` |
 
 Command line, for scans saved with `Frame.save()`:
 ```

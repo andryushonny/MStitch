@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+- The map is rendered on demand: `render()` returns as soon as the frames are placed; `Canvas.region()`,
+  `read()`, `grid()` cells and `save()` render only their part (GPU or CPU), `image` / `owner` render the whole
+  map once. A 58×58 map never has to be in RAM whole (it was ~4 GB with the owner map), and `save()` streams
+  tile by tile.
+- Owner ids are written by the render itself (no pass over the map afterwards).
+- `Canvas.covered(x, y, w, h)` from the frame rectangles; `grid()` uses it instead of the owner map.
+
 ## 0.3.1
 - The flat-field estimated from a scan (profile without one) is computed once per session from ≤ 24 frames
   spread over the scan; it was recomputed on every render from up to 64 and took most of the render time.

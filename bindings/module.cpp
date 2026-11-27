@@ -201,9 +201,6 @@ NB_MODULE(_core, m) {
                      }
                      if (used == "cpu") c = ms::render(ts, p, fl, x0, y0, w, h);
                  }
-                 // owner: index into idx -> frame index
-                 for (auto& o : c.owner)
-                     if (o >= 0) o = ts[o]->id;
                  const size_t cw = c.w, ch = c.h;
                  return nb::make_tuple(to_numpy(std::move(c.rgb), {ch, cw, 3}), to_numpy(std::move(c.owner), {ch, cw}),
                                        c.ox, c.oy, used, note);

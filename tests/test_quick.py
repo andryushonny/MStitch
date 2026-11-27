@@ -92,3 +92,31 @@ def test_calibrate_finds_matrix():
     assert abs(prof.rotation_deg - 0.55) < 0.15
     assert prof.mirrored
     assert prof.flat is not None and abs(prof.flat.mean() - 1) < 1e-3
+
+
+def test_map_parts_equal_the_whole(tmp_path):
+    sc = scan(nx=5, ny=4, seed=41)
+    prof = ms.Profile.guess("sim", 0.5, rotation_deg=0.55, flip_y=True, frame=(sc.w, sc.h), repeatability_um=4)
+    s = ms.Session(prof, backend="cpu", eta=False)
+    for f in sc.frames:
+        s.add(f)
+    s.solve()
+    lazy = s.render()
+    whole = s.render()
+    img, own = whole.image, whole.owner
+    W, H = lazy.size
+    assert img.shape == (H, W, 3) and lazy.shape == img.shape
+    for (x0, y0, w, h) in [(0, 0, 100, 80), (W // 3, H // 4, 257, 133), (W - 50, H - 40, 50, 40)]:
+        part, po = lazy.region(x0, y0, w, h, owner=True)
+        assert (part == img[y0:y0 + h, x0:x0 + w]).all() and (po == own[y0:y0 + h, x0:x0 + w]).all()
+    # cells and saved tiles come out the same as cuts of the whole map
+    for c in list(lazy.grid(150.0))[:5]:
+        x0, y0, w, h = c.px
+        assert (c.image(lazy) == img[y0:y0 + h, x0:x0 + w]).all()
+    from PIL import Image
+    lazy.save(tmp_path / "m", tile=300)
+    import json
+    man = json.loads((tmp_path / "m" / "manifest.json").read_text())
+    for t in man["tiles"][:6]:
+        a = np.asarray(Image.open(tmp_path / "m" / t["file"]))
+        assert (a == img[t["y"]:t["y"] + a.shape[0], t["x"]:t["x"] + a.shape[1]]).all()
