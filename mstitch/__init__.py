@@ -30,5 +30,5 @@ from .canvas import Canvas, Cell
 from .profile import Profile
 from .session import Report, Session
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 __all__ = ["cuda", "Canvas", "Cell", "Profile", "Report", "Session", "calibrate", "__version__"]

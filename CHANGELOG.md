@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+- GPU: cuFFT plans cached per frame size (planning took most of a short run); the GPU starts and compiles its
+  kernels when the Session is made, not in the first solve().
+- The GPU note in `Report.stats["backend_note"]` gives setup, GPU and CPU (NCC) times.
+- bench: per-pair time from a second, warm solve(); the first call shown next to it.
+
 ## 0.2.1
 - Windows: the module links the C++ runtime statically (MSVC `/MT`, MinGW `-static`), so it needs no
   msvcp140 / libstdc++ DLLs; when `_core` still fails to load, the error lists the DLLs it cannot find.

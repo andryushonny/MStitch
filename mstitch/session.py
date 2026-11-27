@@ -61,6 +61,7 @@ class Session:
             raise ValueError("backend must be auto, cuda or cpu")
         if backend != "cpu":
             _cuda.load()
+            _core.cuda_device()      # start the GPU and compile the kernels now, not in the first solve()
         self.backend = backend
         self.profile = profile
         self.mode = mode

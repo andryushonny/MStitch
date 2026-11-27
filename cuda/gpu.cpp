@@ -1,6 +1,9 @@
 #include "cuda/gpu.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <map>
+#include <tuple>
 #include <cstdlib>
 #include <mutex>
 #include <stdexcept>
@@ -60,9 +63,22 @@ public:
     CUfunction k_i16 = nullptr, k_cross = nullptr, k_topk = nullptr;
     Device dev;
     std::mutex m;   // one registration at a time on the GPU
+    std::map<std::tuple<int, int, int, int>, cufftHandle> plans;   // (h, w, type, batch): planning is slow
 
     void bind() { check(api().cuCtxSetCurrent(ctx), "cuCtxSetCurrent"); }
+    cufftHandle plan(int h, int w, int type, int batch);
 };
+
+cufftHandle Gpu::plan(int h, int w, int type, int batch) {
+    const auto key = std::make_tuple(h, w, type, batch);
+    auto it = plans.find(key);
+    if (it != plans.end()) return it->second;
+    cufftHandle p = 0;
+    int dims[2] = {h, w};
+    checkfft(api().cufftPlanMany(&p, 2, dims, nullptr, 1, 0, nullptr, 1, 0, type, batch), "plan");
+    plans[key] = p;
+    return p;
+}
 
 Gpu* gpu(std::string* why) {
     static std::once_flag once;
@@ -130,13 +146,6 @@ struct Buf {
         if (p) api().cuMemFree(p);
     }
 };
-struct Plan {
-    cufftHandle h = 0;
-    bool ok = false;
-    ~Plan() {
-        if (ok) api().cufftDestroy(h);
-    }
-};
 
 void launch(CUfunction f, unsigned gx, unsigned gy, unsigned bx, void** args) {
     check(api().cuLaunchKernel(f, gx, gy, 1, bx, 1, 1, 0, nullptr, args, nullptr), "cuLaunchKernel");
@@ -148,6 +157,9 @@ void gpu_peaks(Gpu* g, const std::vector<const Tile*>& tiles, const std::vector<
                const std::function<void(size_t, size_t, const std::vector<int>&)>& on_batch, BatchStats* st) {
     if (edges.empty()) return;
     std::lock_guard<std::mutex> lk(g->m);
+    using clk = std::chrono::steady_clock;
+    const auto t_start = clk::now();
+    double handoff_ms = 0;
     g->bind();
     Api& a = api();
     const Tile* t0 = tiles[edges[0].i];
@@ -165,12 +177,8 @@ void gpu_peaks(Gpu* g, const std::vector<const Tile*>& tiles, const std::vector<
         return size_t(Bt) * (n * 2 + n * 4 + len * 8) + size_t(bp) * (len * 8 + n * 4) + size_t(bp) * (k + 2) * 4;
     };
     while (Bp > 4 && fixed(Bp) + size_t(2 * Bp + 8) * len * 8 > size_t(0.5 * double(freeb))) Bp /= 2;
-    Plan r2c, c2r;
-    int dims[2] = {H, W};
-    checkfft(a.cufftPlanMany(&r2c.h, 2, dims, nullptr, 1, 0, nullptr, 1, 0, CUFFT_R2C, Bt), "plan R2C");
-    r2c.ok = true;
-    checkfft(a.cufftPlanMany(&c2r.h, 2, dims, nullptr, 1, 0, nullptr, 1, 0, CUFFT_C2R, Bp), "plan C2R");
-    c2r.ok = true;
+    const cufftHandle r2c = g->plan(H, W, CUFFT_R2C, Bt);
+    const cufftHandle c2r = g->plan(H, W, CUFFT_C2R, Bp);
     check(a.cuMemGetInfo(&freeb, &total), "cuMemGetInfo");
     const size_t budget = size_t(0.6 * double(freeb));
     std::vector<int> refs(tiles.size(), 0);        // pairs left per frame
@@ -218,7 +226,7 @@ void gpu_peaks(Gpu* g, const std::vector<const Tile*>& tiles, const std::vector<
             float inv = 1.0f / kRegScale;
             void* args1[] = {&staging.p, &fbuf.p, &cnt, &inv};
             launch(g->k_i16, unsigned((cnt + 255) / 256), 1, 256, args1);
-            checkfft(a.cufftExecR2C(r2c.h, reinterpret_cast<float*>(fbuf.p), reinterpret_cast<void*>(tmpc.p)),
+            checkfft(a.cufftExecR2C(r2c, reinterpret_cast<float*>(fbuf.p), reinterpret_cast<void*>(tmpc.p)),
                      "R2C");
             stats.ffts += nb;
             for (size_t q = 0; q < nb; ++q) {
@@ -241,6 +249,8 @@ void gpu_peaks(Gpu* g, const std::vector<const Tile*>& tiles, const std::vector<
         }
     };
 
+    stats.setup_ms = std::chrono::duration<double, std::milli>(clk::now() - t_start).count();
+    const auto t_loop = clk::now();
     std::vector<int> hsa(Bp), hsb(Bp), hpk;
     for (size_t e0 = 0; e0 < edges.size(); e0 += Bq) {
         const size_t e1 = std::min(edges.size(), e0 + Bq), nb = e1 - e0;
@@ -258,7 +268,7 @@ void gpu_peaks(Gpu* g, const std::vector<const Tile*>& tiles, const std::vector<
         int ilen = int(len);
         void* args2[] = {&spec.p, &sa.p, &sb.p, &ilen, &pc.p};
         launch(g->k_cross, unsigned((len + 255) / 256), unsigned(nb), 256, args2);
-        checkfft(a.cufftExecC2R(c2r.h, reinterpret_cast<void*>(pc.p), reinterpret_cast<float*>(pr.p)), "C2R");
+        checkfft(a.cufftExecC2R(c2r, reinterpret_cast<void*>(pc.p), reinterpret_cast<float*>(pr.p)), "C2R");
         int h = H, w = W, kk = k, rad = 3;
         void* args3[] = {&pr.p, &h, &w, &kk, &rad, &peaks.p};
         launch(g->k_topk, unsigned(nb), 1, 256, args3);
@@ -266,7 +276,9 @@ void gpu_peaks(Gpu* g, const std::vector<const Tile*>& tiles, const std::vector<
         check(a.cuMemcpyDtoH(hpk.data(), peaks.p, nb * k * 4), "download peaks");   // synchronizes
         stats.batches++;
         stats.pairs += nb;
+        const auto th = clk::now();
         on_batch(e0, e1, hpk);
+        handoff_ms += std::chrono::duration<double, std::milli>(clk::now() - th).count();
         // spectra no later pair needs go back to the free list
         for (size_t e = e0; e < e1; ++e)
             for (int f : {edges[e].i, edges[e].j})
@@ -275,6 +287,7 @@ void gpu_peaks(Gpu* g, const std::vector<const Tile*>& tiles, const std::vector<
                     if (it != slot_of.end()) { free_slots.push_back(it->second); slot_of.erase(it); }
                 }
     }
+    stats.gpu_ms = std::chrono::duration<double, std::milli>(clk::now() - t_loop).count() - handoff_ms;
     if (st) *st = stats;
 }
 

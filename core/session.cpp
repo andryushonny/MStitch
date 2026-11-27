@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 
@@ -152,13 +153,17 @@ void Session::register_gpu(const RegParams& p, void* gptr) {
                 }
             });
     }, &st);
-    pool_.wait();
+    const auto tw = std::chrono::steady_clock::now();
+    pool_.wait();   // the last batches' NCC
+    const double tail_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tw).count();
     const auto dev = cuda::device_info(g);
     backend_used_ = "cuda";
     backend_note_ = dev.name + " (sm_" + std::to_string(dev.cc_major) + std::to_string(dev.cc_minor) + "), " +
                     std::to_string(st.pairs) + " pairs in " + std::to_string(st.batches) + " batches of " +
                     std::to_string(st.pairs_per_batch) + ", " + std::to_string(st.ffts) + " FFTs, " +
-                    std::to_string(st.slots) + " spectrum slots, " + std::to_string(st.evictions) + " evictions";
+                    std::to_string(st.slots) + " spectrum slots, " + std::to_string(st.evictions) + " evictions; " +
+                    "setup " + std::to_string(int(st.setup_ms)) + " ms, GPU " + std::to_string(int(st.gpu_ms)) +
+                    " ms, CPU (NCC) after the GPU " + std::to_string(int(tail_ms)) + " ms";
 }
 
 void Session::register_cpu(const RegParams& p) {

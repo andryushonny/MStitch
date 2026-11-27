@@ -39,16 +39,21 @@ for mode, backend in [(m, b) for m in ("quick", "quality") for b in backends]:
         s.add(f)
     s._s.wait()
     t1 = time.perf_counter()
+    t_prep = t1 - t0
     rep = s.solve()
+    t_cold = time.perf_counter() - t1
+    t1 = time.perf_counter()
+    rep = s.solve()              # again: cuFFT plans and caches are warm
     t2 = time.perf_counter()
     cv = s.render()
     t3 = time.perf_counter()
     n, pairs = len(sc.frames), len(rep.edges["i"])
     err = rep.positions_px * 2 ** s.level - sc.truth
     err -= err.mean(axis=0)
-    per_f, per_p = (t1 - t0) / n, (t2 - t1) / max(pairs, 1)
+    per_f, per_p = t_prep / n, (t2 - t1) / max(pairs, 1)
     print(f"{mode:8s} {rep.stats['backend']:4s} frames {n}, pairs {pairs}: prepare {per_f * 1e3:6.1f} ms/frame (wall, all threads), "
-          f"register+solve {per_p * 1e3:6.1f} ms/pair, render {t3 - t2:5.2f} s, "
+          f"register+solve {per_p * 1e3:6.2f} ms/pair (first call {t_cold * 1e3 / max(pairs, 1):6.2f}), "
+          f"render {t3 - t2:5.2f} s, "
           f"error rms {np.sqrt((np.linalg.norm(err, axis=1) ** 2).mean()):.3f} px")
     if rep.stats["backend"] == "cuda":
         print("         " + rep.stats["backend_note"])

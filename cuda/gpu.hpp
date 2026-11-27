@@ -28,6 +28,8 @@ std::string compile_check(int arch);
 
 struct BatchStats {
     size_t pairs = 0, batches = 0, ffts = 0, evictions = 0, slots = 0, pairs_per_batch = 0;
+    double setup_ms = 0;   // memory plan, cuFFT plans (cached after the first call per frame size), allocations
+    double gpu_ms = 0;     // uploads, FFTs, kernels, peaks back (the batch loop without the hand-off to the CPU)
 };
 
 // Peaks for edges (all frames h x w). on_batch(e0, e1, peaks) gets peaks[(e - e0) * k + i] = y * w + x and
