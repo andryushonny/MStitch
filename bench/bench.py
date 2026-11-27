@@ -67,7 +67,8 @@ for mode, backend in [(m, b) for m in ("quick", "quality") for b in backends]:
     print(f"         the map is usable {(rt['flat'] + rt['other']) * 1e3:.0f} ms after solve(); its pixels "
           f"render on demand (whole map: {rt['map'] * 1e3:.0f} ms here)")
     for g in (30, 58):
-        n_g, p_g = g * g, 2 * g * (g - 1)
+        # pairs on a g x g grid at 25 % overlap: rows, columns and both diagonals (as the bench scan has)
+        n_g, p_g = g * g, 2 * g * (g - 1) + 2 * (g - 1) ** 2
         r_g = n_g * render_per_frame + rt["flat"] * min(24, n_g) / min(24, n)   # the flat uses <= 24 frames
         after = p_g * per_p + r_g      # registration + solve + render, once the last frame is in
         print(f"         {g}x{g}: {after:6.1f} s after the last frame (registration {p_g * per_p:5.1f} s, whole map "
