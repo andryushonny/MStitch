@@ -48,11 +48,33 @@ def _candidates() -> tuple[list[str], list[str], list[str]]:
     return driver, nvrtc, cufft
 
 
+_keep = []   # DLLs loaded by hand stay loaded
+
+
+def _preload_nvrtc_builtins(report: str) -> None:
+    """NVRTC on Windows opens nvrtc-builtins64_XYZ.dll by name, which only works if that DLL is already loaded
+    or on PATH: load it from the folder NVRTC came from."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    for line in report.splitlines():
+        if line.startswith("nvrtc: ") and os.path.isabs(line[7:].strip()):
+            folder = os.path.dirname(line[7:].strip())
+            for f in sorted(glob.glob(os.path.join(folder, "nvrtc-builtins64_*.dll"))):
+                if ".alt." not in f:
+                    try:
+                        _keep.append(ctypes.WinDLL(f))
+                    except OSError:
+                        pass
+
+
 def load() -> str:
     """Load the libraries once; returns what was found (a line per library)."""
     global _loaded
     if _loaded is None:
         _loaded = _core.cuda_load(*_candidates())
+        _preload_nvrtc_builtins(_loaded)
     return _loaded
 
 
