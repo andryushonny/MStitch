@@ -41,6 +41,7 @@ add_library(mstitch_lib STATIC
   core/register.cpp
   core/solve.cpp
   core/render.cpp
+  core/entities.cpp
   core/session.cpp
   cuda/api.cpp
   cuda/gpu.cpp)

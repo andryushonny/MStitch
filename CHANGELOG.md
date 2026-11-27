@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+- Seams around objects, not through them (`render(seams="objects")`, the default; CLI `--seams objects|voronoi`):
+  objects on the sample (crystals, crosses, flakes, dust: above 6 noise sigma over the frame's local background,
+  >= 9 px, plus a 6 px margin) are found in every frame, joined across frames on the map, and each is taken whole
+  from the one frame that holds it nearest its centre. Seams run only through the quiet background; an object's
+  shape and size are those of one frame. On a synthetic 5 x 4 scan: 643 objects, 602 whole, none cut (nearest-
+  centre seams cut 92); objects larger than a frame holds keep the usual seams. Works after the CPU and the GPU
+  render (a pass over each object's pixels); `Session.entities` (`boxes()`, `mask(i)`, `whole`, `too_big`).
+
 ## 0.4.0
 - The map is rendered on demand: `render()` returns as soon as the frames are placed; `Canvas.region()`,
   `read()`, `grid()` cells and `save()` render only their part (GPU or CPU), `image` / `owner` render the whole

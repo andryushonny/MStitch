@@ -77,6 +77,7 @@ class Session:
         self.render_times: dict = {}      # the last render(): flat-field estimate, map, the rest
         self.flat: np.ndarray | None = None   # flat-field estimated from this scan (when the profile has none)
         self.flat_level = self.level
+        self.entities = None              # objects kept whole by the last render() (seams='objects')
 
     def __len__(self):
         return len(self._s)
@@ -161,9 +162,14 @@ class Session:
         return poses
 
     # --- canvas out
-    def render(self, flat: np.ndarray | None | str = "auto") -> Canvas:
+    def render(self, flat: np.ndarray | None | str = "auto", seams: str = "objects") -> Canvas:
         """The map at the working level, rendered on demand (see Canvas). flat: 'auto' = the profile's, else
-        estimated from these frames (needs >= 8 frames); None = no correction; or an HxWx3 gain."""
+        estimated from these frames (needs >= 8 frames); None = no correction; or an HxWx3 gain.
+        seams: 'objects' = objects on the sample (crystals, crosses, flakes) are found and each is taken whole
+        from the one frame that holds it, nearest its centre: seams run only through the quiet background and
+        no object is cut or pieced together; 'voronoi' = each pixel from the frame whose centre is nearest."""
+        if seams not in ("objects", "voronoi"):
+            raise ValueError("seams must be objects or voronoi")
         if self.report is None:
             self.solve()
         t_render = time.perf_counter()
@@ -198,12 +204,15 @@ class Session:
             x0 = y0 = 0.0
             W = H = 0
         rects = [(pos[k][0] - x0, pos[k][1] - y0, infos[k]["w"], infos[k]["h"]) for k in ready]
+        t_obj = time.perf_counter()
+        self.entities = s.find_entities(idx, pos, flat32) if seams == "objects" and ready else None
+        self.render_times_objects = time.perf_counter() - t_obj
         self.render_backend, self.render_note = None, ""
 
         def renderer(rx, ry, rw, rh):
             t = time.perf_counter()
             img, owner, _, _, used, note = s.render(idx, pos, flat32, float(rx), float(ry), int(rw), int(rh),
-                                                    backend=self.backend)
+                                                    backend=self.backend, entities=self.entities)
             self.render_backend, self.render_note = used, note
             self.render_times["map"] = self.render_times.get("map", 0.0) + time.perf_counter() - t
             return img, owner
@@ -211,7 +220,8 @@ class Session:
         cv = Canvas(renderer, (x0, y0), (W, H), self.level, self._stage_from_px(ready, pos, x0, y0), rep.poses,
                     rects)
         t_end = time.perf_counter()
-        self.render_times = {"flat": t_box - t_flat, "map": 0.0, "other": (t_flat - t_render) + (t_end - t_box)}
+        self.render_times = {"flat": t_box - t_flat, "objects": self.render_times_objects, "map": 0.0,
+                             "other": (t_flat - t_render) + (t_end - t_box) - self.render_times_objects}
         self.timings["render"] = t_end - t_render       # until the map can be used; pixels come on demand
         self._learn(ready, (H, W))
         return cv

@@ -120,3 +120,32 @@ def test_map_parts_equal_the_whole(tmp_path):
     for t in man["tiles"][:6]:
         a = np.asarray(Image.open(tmp_path / "m" / t["file"]))
         assert (a == img[t["y"]:t["y"] + a.shape[0], t["x"]:t["x"] + a.shape[1]]).all()
+
+
+def test_objects_are_whole_from_one_frame():
+    """Crystals and dust on the map: each object (with its margin) comes from a single frame, the seams run
+    around them; the same map with plain nearest-centre seams cuts some of them."""
+    sc = scan(nx=5, ny=4, seed=7)
+    prof = ms.Profile.guess("sim", 0.5, rotation_deg=0.55, flip_y=True, frame=(sc.w, sc.h), repeatability_um=4)
+    s = ms.Session(prof, mode="quality", backend="cpu", eta=False)
+    for f in sc.frames:
+        s.add(f)
+    s.solve()
+    cv = s.render(seams="objects")
+    own = cv.owner
+    ents = s.entities
+    boxes = ents.boxes()
+    assert len(ents) > 10 and ents.whole > 0.8 * len(ents)
+    ox, oy = int(round(cv.origin[0])), int(round(cv.origin[1]))
+    cut_objects = cut_voronoi = 0
+    vor = s.render(seams="voronoi").owner
+    for i, (x0, y0, w, h, o) in enumerate(boxes):
+        if o < 0:
+            continue
+        m = ents.mask(i).astype(bool)
+        sub = own[y0 - oy:y0 - oy + h, x0 - ox:x0 - ox + w][m]
+        cut_objects += int((sub != o).any())
+        cut_voronoi += int(len(set(vor[y0 - oy:y0 - oy + h, x0 - ox:x0 - ox + w][m].tolist())) > 1)
+    print(len(ents), "objects,", ents.whole, "whole,", ents.too_big, "too big; cut by voronoi seams:", cut_voronoi)
+    assert cut_objects == 0
+    assert cut_voronoi > 0

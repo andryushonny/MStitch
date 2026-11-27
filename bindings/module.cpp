@@ -8,6 +8,7 @@
 
 #include <cstring>
 
+#include "core/entities.hpp"
 #include "core/session.hpp"
 #include "cuda/api.hpp"
 #include "cuda/gpu.hpp"
@@ -62,6 +63,22 @@ std::vector<ms::Vec2> to_vec2(nb::ndarray<double, nb::shape<-1, 2>, nb::c_contig
 
 NB_MODULE(_core, m) {
     m.doc() = "MStitch core (C++). Use the mstitch package, not this module directly.";
+
+    nb::class_<ms::Entities>(m, "Entities")
+        .def_ro("whole", &ms::Entities::whole)
+        .def_ro("too_big", &ms::Entities::too_big)
+        .def("__len__", [](const ms::Entities& e) { return e.list.size(); })
+        .def("boxes", [](const ms::Entities& e) {
+            // x0, y0, w, h, owner per object (map pixels, absolute)
+            std::vector<int32_t> v;
+            for (const auto& x : e.list) v.insert(v.end(), {x.x0, x.y0, x.w, x.h, x.owner});
+            return to_numpy(std::move(v), {e.list.size(), 5});
+        })
+        .def("mask", [](const ms::Entities& e, size_t i) {
+            const auto& x = e.list.at(i);
+            std::vector<uint8_t> v = x.mask;
+            return to_numpy(std::move(v), {size_t(x.h), size_t(x.w)});
+        });
 
     nb::class_<ms::Session>(m, "Session")
         .def(nb::init<int, std::array<double, 4>, unsigned>(), "level"_a, "m"_a, "threads"_a = 0)
@@ -163,11 +180,31 @@ NB_MODULE(_core, m) {
                  const size_t h = ts.empty() ? 0 : ts[0]->h, w = ts.empty() ? 0 : ts[0]->w;
                  return to_numpy(std::move(f), {h, w, 3});
              })
+        .def("find_entities",
+             [](const ms::Session& s, std::vector<int> idx,
+                nb::ndarray<double, nb::shape<-1, 2>, nb::c_contig, nb::device::cpu> pos,
+                std::optional<nb::ndarray<float, nb::c_contig, nb::device::cpu>> flat, double k, int margin,
+                int min_area) {
+                 std::vector<const ms::Tile*> ts;
+                 std::vector<ms::Vec2> p;
+                 auto all = to_vec2(pos);
+                 for (int i : idx)
+                     if (s.tile(i).ready) { ts.push_back(&s.tile(i)); p.push_back(all.at(i)); }
+                 std::vector<float> fl;
+                 if (flat) fl.assign(flat->data(), flat->data() + flat->size());
+                 ms::EntityParams prm;
+                 prm.k = k;
+                 prm.margin = margin;
+                 prm.min_area = min_area;
+                 nb::gil_scoped_release r;
+                 return ms::find_entities(ts, p, fl, prm);
+             },
+             "idx"_a, "pos"_a, "flat"_a.none(), "k"_a = 6.0, "margin"_a = 6, "min_area"_a = 9)
         .def("render",
              [](const ms::Session& s, std::vector<int> idx,
                 nb::ndarray<double, nb::shape<-1, 2>, nb::c_contig, nb::device::cpu> pos,
                 std::optional<nb::ndarray<float, nb::c_contig, nb::device::cpu>> flat, double x0, double y0, int w,
-                int h, std::string backend) {
+                int h, std::string backend, const ms::Entities* entities) {
                  std::vector<const ms::Tile*> ts;
                  std::vector<ms::Vec2> p;
                  auto all = to_vec2(pos);
@@ -200,13 +237,15 @@ NB_MODULE(_core, m) {
                          }
                      }
                      if (used == "cpu") c = ms::render(ts, p, fl, x0, y0, w, h);
+                     // objects whole, each from its own frame: seams only through the background
+                     if (entities) ms::apply_entities(c, ts, p, fl, *entities);
                  }
                  const size_t cw = c.w, ch = c.h;
                  return nb::make_tuple(to_numpy(std::move(c.rgb), {ch, cw, 3}), to_numpy(std::move(c.owner), {ch, cw}),
                                        c.ox, c.oy, used, note);
              },
              "idx"_a, "pos"_a, "flat"_a.none(), "x0"_a = 0.0, "y0"_a = 0.0, "w"_a = 0, "h"_a = 0,
-             "backend"_a = "auto");
+             "backend"_a = "auto", "entities"_a.none() = nb::none());
 
     m.def("cuda_load", &ms::cuda::load, "driver"_a, "nvrtc"_a, "cufft"_a,
           "Load the CUDA driver, NVRTC and cuFFT from the first path that opens in each list.");

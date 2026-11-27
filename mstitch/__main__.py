@@ -52,6 +52,9 @@ def main(argv=None):
     s.add_argument("--profile", type=Path, required=True)
     s.add_argument("--mode", default="quick", choices=["quick", "quality"])
     s.add_argument("--out", type=Path, required=True)
+    s.add_argument("--seams", default="objects", choices=["objects", "voronoi"],
+                   help="objects: crystals, crosses etc. each taken whole from one frame, seams only through the "
+                        "background (default); voronoi: each pixel from the nearest frame centre")
     a = ap.parse_args(argv)
 
     items = list(load_folder(a.folder))
@@ -69,9 +72,13 @@ def main(argv=None):
     for k, it in items:
         ses.add(it) if k == "frame" else ses.add_image(*it)
     rep = ses.solve()
-    cv = ses.render()
+    cv = ses.render(seams=a.seams)
     cv.save(a.out)
     print(rep.summary(), f"| {time.perf_counter() - t:.1f} s -> {a.out}")
+    if ses.entities is not None:
+        e = ses.entities
+        print(f"objects: {len(e)}, {e.whole} whole from one frame, {e.too_big} larger than a frame holds "
+              f"(cut by seams as usual)")
     for r in rep.reshoot():
         print(f"  reshoot frame {r['index']} at ({r['x_um']:.1f}, {r['y_um']:.1f}) um: {r['reason']}")
 
