@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.4
+- CLI: objects.csv next to the map: every object found (centre and size in stage um, whole from one frame or
+  not), for MControl to plan the next round of a scan so that objects sit well inside frames.
+
 ## 0.6.3
 - Cross finder: with a small search window (as for the drawing's crosses) the fine window was narrower than about
   two arm widths, the arm filled it and nothing stood out: no cross found. The fine window is now several arm

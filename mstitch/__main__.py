@@ -101,6 +101,18 @@ def main(argv=None):
               f"left {st.get('anchor_rms_px', 0):.2f} px, drift before {st.get('anchor_drift_before_px') or 0:.2f} px")
     import json
     (a.out / "metrics.json").write_text(json.dumps(ses.metrics(), indent=1))
+    # the objects on the map in stage um (centre, size, whole from one frame or not): for planning the next
+    # scan so that they sit well inside frames
+    if ses.entities is not None and len(ses.entities):
+        b = ses.entities.boxes()
+        ox, oy = cv.origin
+        rows = ["x_um,y_um,w_um,h_um,whole"]
+        for x0, y0, w, h, own in b:
+            cx, cy = cv.to_stage(x0 - ox + w / 2, y0 - oy + h / 2)
+            ax, ay = cv.to_stage(x0 - ox, y0 - oy)
+            bx, by = cv.to_stage(x0 - ox + w, y0 - oy + h)
+            rows.append(f"{float(cx):.3f},{float(cy):.3f},{abs(float(bx - ax)):.3f},{abs(float(by - ay)):.3f},{int(own >= 0)}")
+        (a.out / "objects.csv").write_text("\n".join(rows) + "\n")
     if ses.entities is not None:
         e = ses.entities
         print(f"objects: {len(e)}, {e.whole} whole from one frame, {e.too_big} larger than a frame holds "
