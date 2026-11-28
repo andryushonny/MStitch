@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2
+- anchors.csv may carry a third column, r_um: how far around each cross's place to look. MControl sends a small
+  one for the drawing's crosses (7 um: the arms reach 5 um), so the numbers written next to every cross are not
+  taken for it; before, the default (3 x the stage's repeatability, 15 um) took them in, and most crosses were
+  found wrong and dropped.
+
 ## 0.6.1
 - Seams hardly seen. Gain compensation before rendering (`render(gain="plane")`, the default; CLI `--gain
   plane|scalar|none`): every frame's brightness times exp(a + b x + c y) per colour, found from all overlaps at

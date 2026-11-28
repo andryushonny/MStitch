@@ -80,12 +80,18 @@ def main(argv=None):
     for k, it in items:
         ses.add(it) if k == "frame" else ses.add_image(*it)
     # control points: anchors.csv next to the frames (x_um, y_um: crosses' true stage places), or --anchors
-    anchors = None
+    anchors, radius = None, None
     af = a.anchors or (a.folder / "anchors.csv")
     if Path(af).exists():
         import numpy as _np
-        anchors = _np.loadtxt(af, delimiter=",", skiprows=1, ndmin=2)[:, :2]
-    rep = ses.solve(anchors_um=anchors)
+        t = _np.loadtxt(af, delimiter=",", skiprows=1, ndmin=2)
+        if t.size:
+            anchors = t[:, :2]
+            # a third column: how far around each place to look (um): small, so numbers next to a cross
+            # are not taken for it
+            if t.shape[1] >= 3:
+                radius = float(_np.median(t[:, 2]))
+    rep = ses.solve(anchors_um=anchors, anchor_radius_um=radius)
     cv = ses.render(seams=a.seams, blend_px=a.blend, gain=None if a.gain == "none" else a.gain)
     cv.save(a.out)
     print(rep.summary(), f"| {time.perf_counter() - t:.1f} s -> {a.out}")
