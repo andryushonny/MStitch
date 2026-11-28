@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2
+- `Session.metrics()` and `metrics.json` next to the map (CLI): pairs after the solve (rms, p95, max px), overlap
+  NCC median, frames to reshoot, the stage's landing (rms um), objects whole / cut, the brightness step over
+  overlaps (%), each frame's background unevenness after the flat field (%), timings. MControl's Summary keeps
+  their history.
+
 ## 0.5.1
 - Saved map tiles are RGBA: transparent where no frame reaches (the map's ragged edges). Before they were black and
   covered whatever lay under the map (black strips between selections in MControl).

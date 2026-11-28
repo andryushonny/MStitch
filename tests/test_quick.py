@@ -154,3 +154,19 @@ def test_objects_are_whole_from_one_frame():
     print(len(ents), "objects,", ents.whole, "whole,", ents.too_big, "too big; cut by voronoi seams:", cut_voronoi)
     assert cut_objects == 0
     assert cut_voronoi > 0
+
+
+def test_metrics():
+    sc = scan(nx=4, ny=3, seed=5)
+    prof = ms.Profile.guess("sim", 0.5, rotation_deg=0.55, flip_y=True, frame=(sc.w, sc.h), repeatability_um=4)
+    s = ms.Session(prof, mode="quality", backend="cpu", eta=False)
+    for f in sc.frames:
+        s.add(f)
+    s.solve()
+    s.render()
+    m = s.metrics()
+    print(m)
+    assert m["frames"] == 12 and m["pairs_used"] >= 15
+    assert m["pair_rms_px"] < 0.5 and m["ncc_median"] > 0.5
+    assert 0 <= m["seam_step_pct"] < 5 and 0 <= m["background_sigma_pct"] < 10
+    assert m["objects_whole"] + m["objects_cut"] == m["objects"]

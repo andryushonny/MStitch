@@ -78,6 +78,7 @@ class Session:
         self.flat: np.ndarray | None = None   # flat-field estimated from this scan (when the profile has none)
         self.flat_level = self.level
         self.entities = None              # objects kept whole by the last render() (seams='objects')
+        self._last_flat = None
 
     def __len__(self):
         return len(self._s)
@@ -194,6 +195,7 @@ class Session:
         t_box = time.perf_counter()
         pos = np.ascontiguousarray(rep.positions_px, dtype=np.float64)
         flat32 = None if flat is None else np.ascontiguousarray(flat, np.float32)
+        self._last_flat = flat32
         # the map's box: whole pixels around all frames (as core/render.cpp computes it)
         if ready:
             x0 = float(np.floor(min(pos[k][0] for k in ready)))
@@ -225,6 +227,89 @@ class Session:
         self.timings["render"] = t_end - t_render       # until the map can be used; pixels come on demand
         self._learn(ready, (H, W))
         return cv
+
+    # --- how well it went
+    def metrics(self) -> dict:
+        """Numbers to watch, scan after scan (MControl's Summary keeps their history and limits). After render().
+        Pixels are full resolution.
+          pair_rms_px / pair_p95_px / pair_max_px: how far each overlapping pair stays from its measured offset
+            after the solve (the stitching's own consistency);
+          ncc_median: how alike overlaps are (texture, focus);
+          stage_dev_rms_um: how far frames landed from where the stage said, the common offset taken out
+            (the stage's repeatability as seen);
+          objects / objects_whole / objects_cut: objects kept whole from one frame;
+          seam_step_pct: brightness difference of two frames over their overlap (flat field, exposure);
+          background_sigma_pct: unevenness of each frame's background after the flat field (vignetting left)."""
+        rep, s = self.report, self._s
+        if rep is None:
+            raise RuntimeError("solve() and render() first")
+        scale = 2 ** self.level
+        e = rep.edges
+        used = e["used"].astype(bool)
+        res = e["resid"][used] * scale
+        m: dict = {"frames": len(rep.poses), "level": self.level, "pairs_used": int(used.sum()),
+                   "pairs_dropped": int((~used & e["found"].astype(bool)).sum()),
+                   "reshoot": sum(1 for p in rep.poses if p["reshoot"])}
+        if res.size:
+            m.update(pair_rms_px=float(np.sqrt((res ** 2).mean())), pair_p95_px=float(np.percentile(res, 95)),
+                     pair_max_px=float(res.max()), ncc_median=float(np.median(e["ncc"][used])))
+        d = np.array([[p["dx_um"], p["dy_um"]] for p in rep.poses])
+        if len(d) >= 2:
+            dev = d - np.median(d, axis=0)
+            m["stage_dev_rms_um"] = float(np.sqrt((dev ** 2).sum(axis=1).mean()))
+        if self.entities is not None:
+            m.update(objects=len(self.entities), objects_whole=int(self.entities.whole),
+                     objects_cut=int(self.entities.too_big))
+        n = len(s)
+        ready = [k for k in range(n) if s.tile_info(k)["ready"]]
+        flat = self._last_flat
+        # each frame's background: medians of 8 x 6 blocks (an object in a block does not move its median)
+        sig = []
+        views = {}
+        for k in ready[:: max(1, len(ready) // 40)]:
+            v = s.tile_rgb(k).astype(np.float32)
+            if flat is not None and flat.shape == v.shape:
+                v = v / np.maximum(flat, 0.05)
+            g = v.mean(axis=2)
+            views[k] = g
+            h, w = g.shape
+            bh, bw = h // 6, w // 8
+            med = np.array([[np.median(g[j * bh:(j + 1) * bh, i * bw:(i + 1) * bw]) for i in range(8)] for j in range(6)])
+            if med.mean() > 1:
+                sig.append(med.std() / med.mean())
+        if sig:
+            m["background_sigma_pct"] = float(100 * np.median(sig))
+        # brightness step over overlaps: medians of both frames over their common area
+        pos = rep.positions_px
+        steps = []
+        idx = np.flatnonzero(used)
+        for q in idx[:: max(1, len(idx) // 60)]:
+            i, j = int(e["i"][q]), int(e["j"][q])
+            gi = views.get(i)
+            gj = views.get(j)
+            if gi is None:
+                gi = views[i] = self._grey(i, flat)
+            if gj is None:
+                gj = views[j] = self._grey(j, flat)
+            dx, dy = (np.round(pos[j] - pos[i])).astype(int)
+            h, w = gi.shape
+            x0, x1, y0, y1 = max(0, dx), min(w, w + dx), max(0, dy), min(h, h + dy)
+            if x1 - x0 < 8 or y1 - y0 < 8:
+                continue
+            a = np.median(gi[y0:y1, x0:x1])
+            b = np.median(gj[y0 - dy:y1 - dy, x0 - dx:x1 - dx])
+            if a + b > 2:
+                steps.append(abs(a - b) / ((a + b) / 2))
+        if steps:
+            m["seam_step_pct"] = float(100 * np.median(steps))
+        m["timings_s"] = {k: round(float(v), 3) for k, v in {**self.timings, **self.render_times}.items()}
+        return m
+
+    def _grey(self, k, flat):
+        v = self._s.tile_rgb(k).astype(np.float32)
+        if flat is not None and flat.shape == v.shape:
+            v = v / np.maximum(flat, 0.05)
+        return v.mean(axis=2)
 
     # --- how long it takes (eta.py)
     def _key(self, backend: str) -> str:

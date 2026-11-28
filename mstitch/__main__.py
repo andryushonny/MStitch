@@ -75,6 +75,8 @@ def main(argv=None):
     cv = ses.render(seams=a.seams)
     cv.save(a.out)
     print(rep.summary(), f"| {time.perf_counter() - t:.1f} s -> {a.out}")
+    import json
+    (a.out / "metrics.json").write_text(json.dumps(ses.metrics(), indent=1))
     if ses.entities is not None:
         e = ses.entities
         print(f"objects: {len(e)}, {e.whole} whole from one frame, {e.too_big} larger than a frame holds "
