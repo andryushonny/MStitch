@@ -244,3 +244,33 @@ def test_crosses_pinned():
     # measure: the camera's scale against the drawing
     assert np.sqrt((dp ** 2).mean()) < 0.7 and dp.max() < 1.2 and np.abs(df).max() > 2.0
     assert abs(rp.stats["frame_scale_ppm"] - 3000) < 400
+
+
+def test_seams_hardly_seen():
+    """Every frame up to 6 % brighter or darker, and lit unevenly (a tilt of its own): evened out and blended,
+    the step across seams falls to what the texture itself gives (even frames, hard seams: 2.2 grey levels)."""
+    sc = scan(nx=5, ny=4, seed=13, uneven=0.06)
+    frames = sc.frames
+
+    def step(gain, blend):
+        prof = ms.Profile.guess("sim", 0.5, rotation_deg=0.55, flip_y=True, frame=(sc.w, sc.h), repeatability_um=4)
+        s = ms.Session(prof, mode="quality", backend="cpu", eta=False)
+        for f in frames:
+            s.add(f)
+        s.solve()
+        cv = s.render(gain=gain, blend_px=blend)
+        hard = s.render(gain=None, blend_px=0.0)
+        img = cv.image.astype(np.float32).mean(axis=2)
+        own = hard.owner
+        # mean brightness 6 px either side of each seam crossing (rows and columns), background only
+        d = []
+        for y in range(10, own.shape[0] - 10, 9):
+            row = own[y]
+            for x in np.flatnonzero(row[1:] != row[:-1])[::3]:
+                if 8 <= x < own.shape[1] - 8 and row[x - 7] >= 0 and row[x + 8] >= 0:
+                    d.append(abs(np.median(img[y - 3:y + 4, x - 7:x - 1]) - np.median(img[y - 3:y + 4, x + 2:x + 8])))
+        return float(np.median(d)), s
+    before, _ = step(None, 0.0)
+    after, s = step("plane", 40.0)
+    print("step before", before, "after", after, s.metrics().get("gain_max_pct"))
+    assert after < 0.4 * before and after <= 2.5

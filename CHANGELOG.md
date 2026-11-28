@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1
+- Seams hardly seen. Gain compensation before rendering (`render(gain="plane")`, the default; CLI `--gain
+  plane|scalar|none`): every frame's brightness times exp(a + b x + c y) per colour, found from all overlaps at
+  once (least squares in log, medians of small blocks so objects do not count, a weak pull to 1): frames a few %
+  brighter or darker, or lit with a tilt of their own, are evened out. Then the soft seams blend wider (40 px
+  default, was 16). On a synthetic scan with frames +-6 % and tilted light: the step across seams 6.2 -> 2.0 grey
+  levels, as even frames with hard seams give (2.2: the texture itself). Objects still whole from one frame.
+  Metric `gain_max_pct`: the largest correction.
+
 ## 0.6.0
 - Control points: `solve(anchors_um=...)` (CLI: `anchors.csv` next to the frames, or `--anchors`). Lithography crosses
   whose true places are known (MControl: from the drawing, through the lattice) are looked for in every frame that

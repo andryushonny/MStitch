@@ -127,6 +127,9 @@ NB_MODULE(_core, m) {
                  std::vector<uint8_t> v = t.rgb;
                  return to_numpy(std::move(v), {size_t(t.h), size_t(t.w), 3});
              })
+        .def("gain_tile",
+             [](ms::Session& s, size_t i, std::array<double, 9> g) { s.gain_tile(i, g); },
+             "i"_a, "g"_a)
         .def("predicted",
              [](const ms::Session& s) {
                  auto p = s.predicted();

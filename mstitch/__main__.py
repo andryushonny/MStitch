@@ -58,7 +58,10 @@ def main(argv=None):
     s.add_argument("--anchors", type=Path, default=None,
                    help="control points csv (x_um,y_um): crosses pinned at these stage places (default: anchors.csv "
                         "in the folder, if there)")
-    s.add_argument("--blend", type=float, default=16.0,
+    s.add_argument("--gain", default="plane", choices=["plane", "scalar", "none"],
+                   help="frames' brightness evened out against each other: per colour times exp(a + bx + cy) "
+                        "(plane, default), times a constant (scalar), or not")
+    s.add_argument("--blend", type=float, default=40.0,
                    help="soft seams through the background over this many pixels (0: hard seams)")
     a = ap.parse_args(argv)
 
@@ -83,7 +86,7 @@ def main(argv=None):
         import numpy as _np
         anchors = _np.loadtxt(af, delimiter=",", skiprows=1, ndmin=2)[:, :2]
     rep = ses.solve(anchors_um=anchors)
-    cv = ses.render(seams=a.seams, blend_px=a.blend)
+    cv = ses.render(seams=a.seams, blend_px=a.blend, gain=None if a.gain == "none" else a.gain)
     cv.save(a.out)
     print(rep.summary(), f"| {time.perf_counter() - t:.1f} s -> {a.out}")
     if rep.stats.get("anchors_given"):

@@ -33,6 +33,9 @@ public:
     size_t pending() const;
     unsigned threads() const { return pool_.size(); }   // frames still being unpacked / prepared
     const Tile& tile(size_t i) const { return *tiles_[i]; }
+    // Brightness of a frame evened out: each channel c times exp(g[3c] + g[3c+1] x + g[3c+2] y), x and y from
+    // -1 to 1 across the frame (gain compensation between frames).
+    void gain_tile(size_t i, const std::array<double, 9>& g);
 
     // Stage-predicted top-left of each frame at the working level (frame centre = stage position).
     std::vector<Vec2> predicted() const;

@@ -218,4 +218,21 @@ std::vector<Vec2> Session::solve(const SolveParams& p, SolveStats* stats) {
     return solve_positions(predicted(), edges_, p, stats);
 }
 
+void Session::gain_tile(size_t i, const std::array<double, 9>& g) {
+    Tile& t = *tiles_.at(i);
+    if (!t.ready) return;
+    const double hx = 0.5 * (t.w - 1), hy = 0.5 * (t.h - 1);
+    for (int y = 0; y < t.h; ++y) {
+        const double yn = (y - hy) / std::max(hy, 1.0);
+        for (int x = 0; x < t.w; ++x) {
+            const double xn = (x - hx) / std::max(hx, 1.0);
+            uint8_t* p = &t.rgb[(size_t(y) * t.w + x) * 3];
+            for (int c = 0; c < 3; ++c) {
+                const double f = std::exp(g[3 * c] + g[3 * c + 1] * xn + g[3 * c + 2] * yn);
+                p[c] = uint8_t(std::clamp(p[c] * f + 0.5, 0.0, 255.0));
+            }
+        }
+    }
+}
+
 }  // namespace ms

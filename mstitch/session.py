@@ -79,6 +79,8 @@ class Session:
         self.flat_level = self.level
         self.entities = None              # objects kept whole by the last render() (seams='objects')
         self._last_flat = None
+        self._gained = False
+        self.gains = None                 # per frame 9 numbers (a, b, c per colour), after render(gain=...)
 
     def __len__(self):
         return len(self._s)
@@ -228,14 +230,18 @@ class Session:
         return poses
 
     # --- canvas out
-    def render(self, flat: np.ndarray | None | str = "auto", seams: str = "objects", blend_px: float = 16.0) -> Canvas:
+    def render(self, flat: np.ndarray | None | str = "auto", seams: str = "objects", blend_px: float = 40.0,
+               gain: str | None = "plane") -> Canvas:
         """The map at the working level, rendered on demand (see Canvas). flat: 'auto' = the profile's, else
         estimated from these frames (needs >= 8 frames); None = no correction; or an HxWx3 gain.
         seams: 'objects' = objects on the sample (crystals, crosses, flakes) are found and each is taken whole
         from the one frame that holds it, nearest its centre: seams run only through the quiet background and
         no object is cut or pieced together; 'voronoi' = each pixel from the frame whose centre is nearest.
         blend_px: near a seam, in the background, frames are blended over about this many pixels (working level),
-        so a small brightness difference fades instead of stepping; objects are never blended. 0: hard seams."""
+        so a small brightness difference fades instead of stepping; objects are never blended. 0: hard seams.
+        gain: frames evened out against each other before rendering (once per session): 'plane' = each frame's
+        brightness times exp(a + b x + c y) per colour (also what is left of vignetting, tilted light), 'scalar'
+        = times a constant per colour, None = as they are. Found from all overlaps at once, least squares."""
         if seams not in ("objects", "voronoi"):
             raise ValueError("seams must be objects or voronoi")
         if self.report is None:
@@ -263,6 +269,9 @@ class Session:
         pos = np.ascontiguousarray(rep.positions_px, dtype=np.float64)
         flat32 = None if flat is None else np.ascontiguousarray(flat, np.float32)
         self._last_flat = flat32
+        if gain and not self._gained:
+            self.gains = self._compensate(flat32, pos, gain)
+            self._gained = True
         # the map's box: whole pixels around all frames (as core/render.cpp computes it)
         if ready:
             x0 = float(np.floor(min(pos[k][0] for k in ready)))
@@ -374,8 +383,108 @@ class Session:
                 steps.append(abs(a - b) / ((a + b) / 2))
         if steps:
             m["seam_step_pct"] = float(100 * np.median(steps))
+        if self.gains is not None and len(self.gains):
+            a = self.gains[:, [0, 3, 6]]
+            m["gain_max_pct"] = float(100 * (np.exp(np.abs(a).max()) - 1))
         m["timings_s"] = {k: round(float(v), 3) for k, v in {**self.timings, **self.render_times}.items()}
         return m
+
+    def _compensate(self, flat, pos, mode):
+        """Each frame's gain from all overlaps at once: in log, g_i(p) - g_j(p) = log I_j(p) - log I_i(p) at
+        points of every overlap (medians of small blocks: objects do not count), g = a + b x + c y per colour
+        (x, y from -1 to 1 across the frame; 'scalar': b = c = 0), a weak pull of every gain to 1. Applied to
+        the frames themselves."""
+        s, rep = self._s, self.report
+        e = rep.edges
+        n = len(s)
+        infos = [s.tile_info(k) for k in range(n)]
+        cache = {}
+
+        def img(k):
+            if k not in cache:
+                v = s.tile_rgb(k).astype(np.float32)
+                if flat is not None and flat.shape == v.shape:
+                    v = v / np.maximum(flat, 0.05)
+                cache[k] = v
+            return cache[k]
+
+        rows = []  # i, j, xi, yi, xj, yj, dlog (3)
+        for q in np.flatnonzero(e["used"].astype(bool)):
+            i, j = int(e["i"][q]), int(e["j"][q])
+            wi, hi, wj, hj = infos[i]["w"], infos[i]["h"], infos[j]["w"], infos[j]["h"]
+            dx, dy = (np.round(pos[j] - pos[i])).astype(int)
+            x0, x1, y0, y1 = max(0, dx), min(wi, dx + wj), max(0, dy), min(hi, dy + hj)
+            if x1 - x0 < 12 or y1 - y0 < 12:
+                continue
+            a, b = img(i), img(j)
+            nx, ny = (6, 6)
+            for gy in range(ny):
+                for gx in range(nx):
+                    bx0 = x0 + (x1 - x0) * gx // nx
+                    bx1 = x0 + (x1 - x0) * (gx + 1) // nx
+                    by0 = y0 + (y1 - y0) * gy // ny
+                    by1 = y0 + (y1 - y0) * (gy + 1) // ny
+                    if bx1 - bx0 < 3 or by1 - by0 < 3:
+                        continue
+                    mi = np.median(a[by0:by1, bx0:bx1].reshape(-1, 3), axis=0)
+                    mj = np.median(b[by0 - dy:by1 - dy, bx0 - dx:bx1 - dx].reshape(-1, 3), axis=0)
+                    if (mi < 8).any() or (mj < 8).any() or (mi > 250).any() or (mj > 250).any():
+                        continue
+                    dl = np.log(mj) - np.log(mi)
+                    if (np.abs(dl) > 0.4).any():
+                        continue
+                    cx, cy = (bx0 + bx1) / 2, (by0 + by1) / 2
+                    hxi, hyi, hxj, hyj = (wi - 1) / 2, (hi - 1) / 2, (wj - 1) / 2, (hj - 1) / 2
+                    rows.append([i, j, (cx - hxi) / hxi, (cy - hyi) / hyi, (cx - dx - hxj) / hxj, (cy - dy - hyj) / hyj,
+                                 *dl])
+        g = np.zeros((n, 9))
+        if not rows:
+            return g
+        r = np.array(rows)
+        ii, jj = r[:, 0].astype(int), r[:, 1].astype(int)
+        ti = np.stack([np.ones(len(r)), r[:, 2], r[:, 3]], axis=1)
+        tj = np.stack([np.ones(len(r)), r[:, 4], r[:, 5]], axis=1)
+        if mode == "scalar":
+            ti[:, 1:] = 0
+            tj[:, 1:] = 0
+        # the pull to 1: weak for a (a frame alone keeps its brightness), stronger for the slope
+        per = max(1.0, len(r) / max(1, n))
+        lam = np.tile([1e-3, 0.05, 0.05], n) * per
+
+        def mat(x):
+            th = x.reshape(n, 3)
+            return (th[ii] * ti).sum(1) - (th[jj] * tj).sum(1)
+
+        def mat_t(y):
+            out = np.zeros((n, 3))
+            np.add.at(out, ii, ti * y[:, None])
+            np.add.at(out, jj, -tj * y[:, None])
+            return out.ravel()
+
+        for c in range(3):
+            rhs = mat_t(r[:, 6 + c])
+            x = np.zeros(3 * n)
+            res = rhs - (mat_t(mat(x)) + lam * x)
+            d = res.copy()
+            rr = res @ res
+            for _ in range(400):
+                if rr < 1e-18:
+                    break
+                q = mat_t(mat(d)) + lam * d
+                alpha = rr / (d @ q)
+                x += alpha * d
+                res -= alpha * q
+                rr2 = res @ res
+                d = res + (rr2 / rr) * d
+                rr = rr2
+            th = x.reshape(n, 3)
+            th[:, 0] = np.clip(th[:, 0] - np.median(th[:, 0]), -0.3, 0.3)
+            th[:, 1:] = np.clip(th[:, 1:], -0.2, 0.2)
+            g[:, 3 * c:3 * c + 3] = th
+        for k in range(n):
+            if infos[k]["ready"] and np.abs(g[k]).max() > 1e-4:
+                s.gain_tile(k, g[k].tolist())
+        return g
 
     def _grey(self, k, flat):
         v = self._s.tile_rgb(k).astype(np.float32)

@@ -84,7 +84,7 @@ def stage_matrix(um_per_px: float, rot_deg: float, flip_y: bool) -> np.ndarray:
 
 def scan(nx=6, ny=5, w=640, h=480, overlap=0.25, um_per_px=0.5, rot_deg=0.55, flip_y=True, jitter_px=10.0,
          noise=2.0, bits=8, seed=1, blank: set | None = None, moving: set | None = None,
-         crosses_px: float | None = None) -> Scan:
+         crosses_px: float | None = None, uneven: float = 0.0) -> Scan:
     rng = np.random.default_rng(seed)
     m = stage_matrix(um_per_px, rot_deg, flip_y)
     minv = np.linalg.inv(m)
@@ -114,6 +114,12 @@ def scan(nx=6, ny=5, w=640, h=480, overlap=0.25, um_per_px=0.5, rot_deg=0.55, fl
     for k, (s, t) in enumerate(zip(targets, true_tl)):
         x0, y0 = int(t[0] + off[0]), int(t[1] + off[1])
         img = sample[y0:y0 + h, x0:x0 + w] * vig
+        if uneven:
+            # each frame its own brightness (+- uneven) and tilt of the light (+- 2/3 uneven across it)
+            gy, gx = np.mgrid[0:h, 0:w]
+            g = (1 + rng.uniform(-uneven, uneven)) * (1 + rng.uniform(-uneven, uneven) * 0.67 * (gx / w - 0.5)
+                                                      + rng.uniform(-uneven, uneven) * 0.67 * (gy / h - 0.5))
+            img = img * g[..., None].astype(np.float32)
         if blank and k in blank:
             img = np.full_like(img, 0.6) * vig
         img = img + rng.normal(0, noise / 255, img.shape).astype(np.float32)
