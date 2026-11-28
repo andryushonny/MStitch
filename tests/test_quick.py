@@ -274,3 +274,15 @@ def test_seams_hardly_seen():
     after, s = step("plane", 40.0)
     print("step before", before, "after", after, s.metrics().get("gain_max_pct"))
     assert after < 0.4 * before and after <= 2.5
+
+
+def test_cross_in_a_small_window():
+    """A cross with arms 6 px wide found with a small search window (as for crosses with numbers next to them)."""
+    from mstitch.crosses import refine
+    g = np.full((120, 120), 200.0, np.float32)
+    cx, cy = 60.3, 57.6
+    yy, xx = np.mgrid[0:120, 0:120] + 0.5
+    g[(np.abs(yy - cy) < 3) & (np.abs(xx - cx) < 20)] = 60
+    g[(np.abs(xx - cx) < 3) & (np.abs(yy - cy) < 20)] = 60
+    c = refine(g, 61, 58, 13)
+    assert c is not None and abs(c[0] - cx) < 0.6 and abs(c[1] - cy) < 0.6, c

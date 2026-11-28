@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.3
+- Cross finder: with a small search window (as for the drawing's crosses) the fine window was narrower than about
+  two arm widths, the arm filled it and nothing stood out: no cross found. The fine window is now several arm
+  widths across (the arm's width measured at half its peak in the first pass).
+
 ## 0.6.2
 - anchors.csv may carry a third column, r_um: how far around each cross's place to look. MControl sends a small
   one for the drawing's crosses (7 um: the arms reach 5 um), so the numbers written next to every cross are not

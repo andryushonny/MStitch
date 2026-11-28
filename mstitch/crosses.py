@@ -20,7 +20,13 @@ def _peak(p: np.ndarray, frac: float) -> float | None:
     while b + 1 < len(p) and dev[b + 1] > half:
         b += 1
     w = dev[a:b + 1]
-    return float((w * np.arange(a, b + 1)).sum() / w.sum())
+    # the arm's own width, where it is at least half the peak
+    c = d = k
+    while c > 0 and dev[c - 1] > best * 0.5:
+        c -= 1
+    while d + 1 < len(p) and dev[d + 1] > best * 0.5:
+        d += 1
+    return float((w * np.arange(a, b + 1)).sum() / w.sum()), d - c + 1
 
 
 def _profiles(g: np.ndarray, u: float, v: float, r: int, frac: float):
@@ -33,7 +39,7 @@ def _profiles(g: np.ndarray, u: float, v: float, r: int, frac: float):
     x = _peak(win.mean(axis=0), frac)
     if x is None or y is None:
         return None
-    return cx - r + x + 0.5, cy - r + y + 0.5
+    return cx - r + x[0] + 0.5, cy - r + y[0] + 0.5, max(x[1], y[1])
 
 
 def refine(g: np.ndarray, u: float, v: float, radius: int):
@@ -41,7 +47,8 @@ def refine(g: np.ndarray, u: float, v: float, radius: int):
     c = _profiles(g, u, v, radius, 0.1)
     if c is None:
         return None
-    r2 = max(radius * 3 // 10, 4)
+    # the fine window: small, but several arm widths across (else the arm fills it and stands out of nothing)
+    r2 = max(radius * 3 // 10, 4, 2 * c[2] + 4)
     for _ in range(3):
         n = _profiles(g, c[0], c[1], r2, 0.25)
         if n is None:
@@ -50,4 +57,4 @@ def refine(g: np.ndarray, u: float, v: float, radius: int):
         c = n
         if moved < 0.01:
             break
-    return c
+    return c[0], c[1]
