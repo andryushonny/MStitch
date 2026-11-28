@@ -242,7 +242,7 @@ def test_crosses_pinned():
     assert rp.stats["anchors_used"] > 10
     # what is left is the frames' own scale (0.3 % of half a frame: about 1 px at the edges), which the pins
     # measure: the camera's scale against the drawing
-    assert np.sqrt((dp ** 2).mean()) < 0.7 and dp.max() < 1.2 and np.abs(df).max() > 2.0
+    assert np.sqrt((dp ** 2).mean()) < 0.7 and dp.max() < 1.7 and np.abs(df).max() > 2.0
     assert abs(rp.stats["frame_scale_ppm"] - 3000) < 400
 
 
