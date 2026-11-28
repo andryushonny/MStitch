@@ -55,6 +55,8 @@ def main(argv=None):
     s.add_argument("--seams", default="objects", choices=["objects", "voronoi"],
                    help="objects: crystals, crosses etc. each taken whole from one frame, seams only through the "
                         "background (default); voronoi: each pixel from the nearest frame centre")
+    s.add_argument("--blend", type=float, default=16.0,
+                   help="soft seams through the background over this many pixels (0: hard seams)")
     a = ap.parse_args(argv)
 
     items = list(load_folder(a.folder))
@@ -72,7 +74,7 @@ def main(argv=None):
     for k, it in items:
         ses.add(it) if k == "frame" else ses.add_image(*it)
     rep = ses.solve()
-    cv = ses.render(seams=a.seams)
+    cv = ses.render(seams=a.seams, blend_px=a.blend)
     cv.save(a.out)
     print(rep.summary(), f"| {time.perf_counter() - t:.1f} s -> {a.out}")
     import json

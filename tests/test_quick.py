@@ -170,3 +170,37 @@ def test_metrics():
     assert m["pair_rms_px"] < 0.5 and m["ncc_median"] > 0.5
     assert 0 <= m["seam_step_pct"] < 5 and 0 <= m["background_sigma_pct"] < 10
     assert m["objects_whole"] + m["objects_cut"] == m["objects"]
+
+
+def test_soft_seams_leave_objects_alone():
+    """Soft seams change only the background next to seams; objects are the same pixels either way."""
+    sc = scan(nx=4, ny=3, seed=9)
+    prof = ms.Profile.guess("sim", 0.5, rotation_deg=0.55, flip_y=True, frame=(sc.w, sc.h), repeatability_um=4)
+    s = ms.Session(prof, mode="quality", backend="cpu", eta=False)
+    for f in sc.frames:
+        s.add(f)
+    s.solve()
+    hard = s.render(blend_px=0.0)
+    img_h, own = hard.image.astype(float), hard.owner
+    ents = s.entities
+    soft = s.render(blend_px=16.0).image.astype(float)
+    # objects untouched
+    ox, oy = int(round(hard.origin[0])), int(round(hard.origin[1]))
+    for i, (x0, y0, w, h, o) in enumerate(ents.boxes()):
+        if o < 0:
+            continue
+        m = ents.mask(i).astype(bool)
+        a = img_h[y0 - oy:y0 - oy + h, x0 - ox:x0 - ox + w][m]
+        b = soft[y0 - oy:y0 - oy + h, x0 - ox:x0 - ox + w][m]
+        assert (a == b).all()
+    # the background next to seams: soft differs from hard there (blended), far from seams not at all
+    seam = np.zeros(own.shape, bool)
+    seam[:, 1:] |= own[:, 1:] != own[:, :-1]
+    seam[1:, :] |= own[1:, :] != own[:-1, :]
+    changed = np.abs(soft - img_h).max(axis=2) > 0
+    assert changed.sum() > 0
+    near = np.zeros_like(seam)
+    ys, xs = np.nonzero(seam)
+    for y, x in zip(ys[::7], xs[::7]):
+        near[max(0, y - 20):y + 21, max(0, x - 20):x + 21] = True
+    assert not changed[~near].any()

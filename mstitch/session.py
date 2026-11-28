@@ -163,12 +163,14 @@ class Session:
         return poses
 
     # --- canvas out
-    def render(self, flat: np.ndarray | None | str = "auto", seams: str = "objects") -> Canvas:
+    def render(self, flat: np.ndarray | None | str = "auto", seams: str = "objects", blend_px: float = 16.0) -> Canvas:
         """The map at the working level, rendered on demand (see Canvas). flat: 'auto' = the profile's, else
         estimated from these frames (needs >= 8 frames); None = no correction; or an HxWx3 gain.
         seams: 'objects' = objects on the sample (crystals, crosses, flakes) are found and each is taken whole
         from the one frame that holds it, nearest its centre: seams run only through the quiet background and
-        no object is cut or pieced together; 'voronoi' = each pixel from the frame whose centre is nearest."""
+        no object is cut or pieced together; 'voronoi' = each pixel from the frame whose centre is nearest.
+        blend_px: near a seam, in the background, frames are blended over about this many pixels (working level),
+        so a small brightness difference fades instead of stepping; objects are never blended. 0: hard seams."""
         if seams not in ("objects", "voronoi"):
             raise ValueError("seams must be objects or voronoi")
         if self.report is None:
@@ -214,7 +216,8 @@ class Session:
         def renderer(rx, ry, rw, rh):
             t = time.perf_counter()
             img, owner, _, _, used, note = s.render(idx, pos, flat32, float(rx), float(ry), int(rw), int(rh),
-                                                    backend=self.backend, entities=self.entities)
+                                                    backend=self.backend, entities=self.entities,
+                                                    blend_px=float(blend_px))
             self.render_backend, self.render_note = used, note
             self.render_times["map"] = self.render_times.get("map", 0.0) + time.perf_counter() - t
             return img, owner

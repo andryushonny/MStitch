@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.3
+- Soft seams in the background (`render(blend_px=16)`, CLI `--blend 16`, 0 = hard): near a seam the frames are
+  blended, each weighted by how much farther its centre is than the nearest (and fading to its own edge), so a
+  small brightness difference fades instead of stepping. Objects (with their margin) are never blended: whole
+  from one frame as before. CPU pass after either render.
+
 ## 0.5.2
 - `Session.metrics()` and `metrics.json` next to the map (CLI): pairs after the solve (rms, p95, max px), overlap
   NCC median, frames to reshoot, the stage's landing (rms um), objects whole / cut, the brightness step over

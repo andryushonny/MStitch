@@ -31,5 +31,5 @@ from .eta import Estimate, Eta, plan_features
 from .profile import Profile
 from .session import Report, Session
 
-__version__ = "0.5.2"
+__version__ = "0.5.3"
 __all__ = ["cuda", "Canvas", "Cell", "Estimate", "Eta", "plan_features", "Profile", "Report", "Session", "calibrate", "__version__"]

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <numeric>
 
 #include "core/pool.hpp"
@@ -270,6 +271,88 @@ void apply_entities(CanvasImage& c, const std::vector<const Tile*>& tiles, const
                 own = t.id;
             }
         }
+    }
+}
+
+void feather_seams(CanvasImage& c, const std::vector<const Tile*>& tiles, const std::vector<Vec2>& pos,
+                   const std::vector<float>& flat, const Entities* ents, double band) {
+    if (band <= 0 || c.w <= 0 || c.h <= 0) return;
+    const size_t n = size_t(c.w) * c.h;
+    const int cx0 = int(std::lround(c.ox)), cy0 = int(std::lround(c.oy));
+    // objects: kept as they are
+    std::vector<uint8_t> keep(n, 0);
+    if (ents)
+        for (const Entity& e : ents->list) {
+            if (e.x0 >= cx0 + c.w || e.y0 >= cy0 + c.h || e.x0 + e.w <= cx0 || e.y0 + e.h <= cy0) continue;
+            for (int my = 0; my < e.h; ++my) {
+                const int y = e.y0 + my - cy0;
+                if (y < 0 || y >= c.h) continue;
+                for (int mx = 0; mx < e.w; ++mx) {
+                    const int x = e.x0 + mx - cx0;
+                    if (x >= 0 && x < c.w && e.mask[size_t(my) * e.w + mx]) keep[size_t(y) * c.w + x] = 1;
+                }
+            }
+        }
+    // the distance to the nearest frame's centre (that frame is the pixel's owner where nothing was kept)
+    std::vector<float> dmin(n, std::numeric_limits<float>::max());
+    auto centre = [&](size_t k) { return Vec2{pos[k][0] + 0.5 * (tiles[k]->w - 1), pos[k][1] + 0.5 * (tiles[k]->h - 1)}; };
+    for (size_t k = 0; k < tiles.size(); ++k) {
+        const Tile& t = *tiles[k];
+        const Vec2 ct = centre(k);
+        const double px = pos[k][0] - c.ox, py = pos[k][1] - c.oy;
+        const int ty0 = std::max(0, int(std::ceil(py))), ty1 = std::min(c.h, int(std::floor(py + t.h - 1)) + 1);
+        const int tx0 = std::max(0, int(std::ceil(px))), tx1 = std::min(c.w, int(std::floor(px + t.w - 1)) + 1);
+        for (int y = ty0; y < ty1; ++y)
+            for (int x = tx0; x < tx1; ++x) {
+                const double dx = c.ox + x - ct[0], dy = c.oy + y - ct[1];
+                float& d = dmin[size_t(y) * c.w + x];
+                d = std::min(d, float(std::sqrt(dx * dx + dy * dy)));
+            }
+    }
+    // blend: every frame within the band of the nearest, weighted
+    std::vector<float> acc(n * 3, 0.0f), wsum(n, 0.0f);
+    for (size_t k = 0; k < tiles.size(); ++k) {
+        const Tile& t = *tiles[k];
+        const bool has_flat = flat.size() == size_t(t.w) * t.h * 3;
+        const Vec2 ct = centre(k);
+        const double px = pos[k][0] - c.ox, py = pos[k][1] - c.oy;
+        const int ty0 = std::max(0, int(std::ceil(py))), ty1 = std::min(c.h, int(std::floor(py + t.h - 1)) + 1);
+        const int tx0 = std::max(0, int(std::ceil(px))), tx1 = std::min(c.w, int(std::floor(px + t.w - 1)) + 1);
+        for (int y = ty0; y < ty1; ++y) {
+            const double sy = y - py;
+            const int iy = std::min(int(sy), t.h - 2);
+            const float fy = float(sy - iy);
+            for (int x = tx0; x < tx1; ++x) {
+                const size_t i = size_t(y) * c.w + x;
+                if (keep[i] || c.owner[i] < 0) continue;
+                const double dx = c.ox + x - ct[0], dy = c.oy + y - ct[1];
+                const float wgt = float(band) - (float(std::sqrt(dx * dx + dy * dy)) - dmin[i]);
+                if (wgt <= 0) continue;
+                // near the frame's own edge its weight goes to zero too (no hard edge where it ends)
+                const float edge = float(std::min(std::min(sy, t.h - 1 - sy), std::min(x - px, t.w - 1 - (x - px))));
+                const float w = wgt * std::clamp(edge / float(band), 0.0f, 1.0f);
+                if (w <= 0) continue;
+                const double sx = x - px;
+                const int ix = std::min(int(sx), t.w - 2);
+                const float fx = float(sx - ix);
+                for (int ch = 0; ch < 3; ++ch) {
+                    auto at = [&](int yy, int xx) {
+                        const size_t q = (size_t(yy) * t.w + xx) * 3 + ch;
+                        float v = float(t.rgb[q]);
+                        if (has_flat) v /= std::max(flat[q], 0.05f);
+                        return v;
+                    };
+                    const float v = (1 - fy) * ((1 - fx) * at(iy, ix) + fx * at(iy, ix + 1)) +
+                                    fy * ((1 - fx) * at(iy + 1, ix) + fx * at(iy + 1, ix + 1));
+                    acc[i * 3 + ch] += w * v;
+                }
+                wsum[i] += w;
+            }
+        }
+    }
+    for (size_t i = 0; i < n; ++i) {
+        if (keep[i] || wsum[i] <= 0) continue;
+        for (int ch = 0; ch < 3; ++ch) c.rgb[i * 3 + ch] = uint8_t(std::clamp(acc[i * 3 + ch] / wsum[i] + 0.5f, 0.0f, 255.0f));
     }
 }
 

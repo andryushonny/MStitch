@@ -204,7 +204,7 @@ NB_MODULE(_core, m) {
              [](const ms::Session& s, std::vector<int> idx,
                 nb::ndarray<double, nb::shape<-1, 2>, nb::c_contig, nb::device::cpu> pos,
                 std::optional<nb::ndarray<float, nb::c_contig, nb::device::cpu>> flat, double x0, double y0, int w,
-                int h, std::string backend, const ms::Entities* entities) {
+                int h, std::string backend, const ms::Entities* entities, double blend_px) {
                  std::vector<const ms::Tile*> ts;
                  std::vector<ms::Vec2> p;
                  auto all = to_vec2(pos);
@@ -239,13 +239,15 @@ NB_MODULE(_core, m) {
                      if (used == "cpu") c = ms::render(ts, p, fl, x0, y0, w, h);
                      // objects whole, each from its own frame: seams only through the background
                      if (entities) ms::apply_entities(c, ts, p, fl, *entities);
+                     // soft seams through the background (objects untouched)
+                     if (blend_px > 0) ms::feather_seams(c, ts, p, fl, entities, blend_px);
                  }
                  const size_t cw = c.w, ch = c.h;
                  return nb::make_tuple(to_numpy(std::move(c.rgb), {ch, cw, 3}), to_numpy(std::move(c.owner), {ch, cw}),
                                        c.ox, c.oy, used, note);
              },
              "idx"_a, "pos"_a, "flat"_a.none(), "x0"_a = 0.0, "y0"_a = 0.0, "w"_a = 0, "h"_a = 0,
-             "backend"_a = "auto", "entities"_a.none() = nb::none());
+             "backend"_a = "auto", "entities"_a.none() = nb::none(), "blend_px"_a = 0.0);
 
     m.def("cuda_load", &ms::cuda::load, "driver"_a, "nvrtc"_a, "cufft"_a,
           "Load the CUDA driver, NVRTC and cuFFT from the first path that opens in each list.");

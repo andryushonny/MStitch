@@ -42,4 +42,11 @@ Entities find_entities(const std::vector<const Tile*>& tiles, const std::vector<
 void apply_entities(CanvasImage& c, const std::vector<const Tile*>& tiles, const std::vector<Vec2>& pos,
                     const std::vector<float>& flat, const Entities& e);
 
+// Soft seams in the quiet background: near a seam (where another frame's centre is less than `band` pixels
+// farther than the nearest one's) the frames are blended, weight band - (d_k - d_nearest), so a small brightness
+// difference between frames fades instead of stepping. Objects (with their margin) are never blended: they stay
+// whole from one frame. band <= 0: nothing.
+void feather_seams(CanvasImage& c, const std::vector<const Tile*>& tiles, const std::vector<Vec2>& pos,
+                   const std::vector<float>& flat, const Entities* e, double band);
+
 }  // namespace ms
