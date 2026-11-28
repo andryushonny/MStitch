@@ -150,9 +150,15 @@ NB_MODULE(_core, m) {
         .def_prop_ro("backend_note", &ms::Session::backend_note)
         .def("edges", [](const ms::Session& s) { return edges_dict(s.edges()); })
         .def("solve",
-             [](ms::Session& s, double prior_weight, double min_ncc, double outlier_px, int rounds) {
+             [](ms::Session& s, double prior_weight, double min_ncc, double outlier_px, int rounds,
+                std::optional<nb::ndarray<double, nb::shape<-1, 6>, nb::c_contig, nb::device::cpu>> anchors) {
                  ms::SolveParams p;
                  p.prior_weight = prior_weight; p.min_ncc = min_ncc; p.outlier_px = outlier_px; p.rounds = rounds;
+                 if (anchors) {
+                     const double* a = anchors->data();
+                     for (size_t k = 0; k < anchors->shape(0); ++k)
+                         p.anchors.push_back({int(a[6 * k]), a[6 * k + 1], a[6 * k + 2], a[6 * k + 3], a[6 * k + 4], a[6 * k + 5]});
+                 }
                  ms::SolveStats st;
                  std::vector<ms::Vec2> pos;
                  {
@@ -166,7 +172,8 @@ NB_MODULE(_core, m) {
                  stats["rounds"] = st.rounds; stats["rms_px"] = st.rms_px;
                  return nb::make_tuple(to_numpy(std::move(v), {pos.size(), 2}), stats, edges_dict(s.edges()));
              },
-             "prior_weight"_a = 1e-3, "min_ncc"_a = 0.3, "outlier_px"_a = 1.5, "rounds"_a = 5)
+             "prior_weight"_a = 1e-3, "min_ncc"_a = 0.3, "outlier_px"_a = 1.5, "rounds"_a = 5,
+             "anchors"_a.none() = nb::none())
         .def("estimate_flat",
              [](const ms::Session& s, std::vector<int> idx) {
                  std::vector<const ms::Tile*> ts;

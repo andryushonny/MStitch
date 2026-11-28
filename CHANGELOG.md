@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0
+- Control points: `solve(anchors_um=...)` (CLI: `anchors.csv` next to the frames, or `--anchors`). Lithography crosses
+  whose true places are known (MControl: from the drawing, through the lattice) are looked for in every frame that
+  holds them and pinned there strongly in the global solve, so drift cannot pile up along the map; one far off
+  the others' consensus is dropped. Reported: crosses given / found / pinned, what is left (px), the drift before
+  pinning, and `frame_scale_ppm`: the camera's scale against the drawing from crosses two by two within a frame
+  (what pins cannot fix: frames are moved, not stretched; MControl corrects um/px with it).
+  On a synthetic scan with the profile's scale 0.3 % off: free, the crosses drift up to 2.6 px; pinned, rms
+  0.6 px (the frames' own 0.3 %), and frame_scale_ppm 3007 for 3000.
+- `mstitch.crosses.refine`: the cross finder (as MControl's).
+
 ## 0.5.3
 - Soft seams in the background (`render(blend_px=16)`, CLI `--blend 16`, 0 = hard): near a seam the frames are
   blended, each weighted by how much farther its centre is than the nearest (and fading to its own edge), so a

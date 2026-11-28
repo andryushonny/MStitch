@@ -55,6 +55,9 @@ def main(argv=None):
     s.add_argument("--seams", default="objects", choices=["objects", "voronoi"],
                    help="objects: crystals, crosses etc. each taken whole from one frame, seams only through the "
                         "background (default); voronoi: each pixel from the nearest frame centre")
+    s.add_argument("--anchors", type=Path, default=None,
+                   help="control points csv (x_um,y_um): crosses pinned at these stage places (default: anchors.csv "
+                        "in the folder, if there)")
     s.add_argument("--blend", type=float, default=16.0,
                    help="soft seams through the background over this many pixels (0: hard seams)")
     a = ap.parse_args(argv)
@@ -73,10 +76,20 @@ def main(argv=None):
     ses = Session(Profile.load(a.profile), mode=a.mode)
     for k, it in items:
         ses.add(it) if k == "frame" else ses.add_image(*it)
-    rep = ses.solve()
+    # control points: anchors.csv next to the frames (x_um, y_um: crosses' true stage places), or --anchors
+    anchors = None
+    af = a.anchors or (a.folder / "anchors.csv")
+    if Path(af).exists():
+        import numpy as _np
+        anchors = _np.loadtxt(af, delimiter=",", skiprows=1, ndmin=2)[:, :2]
+    rep = ses.solve(anchors_um=anchors)
     cv = ses.render(seams=a.seams, blend_px=a.blend)
     cv.save(a.out)
     print(rep.summary(), f"| {time.perf_counter() - t:.1f} s -> {a.out}")
+    if rep.stats.get("anchors_given"):
+        st = rep.stats
+        print(f"crosses pinned: {st.get('anchors_used', 0)} of {st.get('anchors_found', 0)} found ({st['anchors_given']} given), "
+              f"left {st.get('anchor_rms_px', 0):.2f} px, drift before {st.get('anchor_drift_before_px') or 0:.2f} px")
     import json
     (a.out / "metrics.json").write_text(json.dumps(ses.metrics(), indent=1))
     if ses.entities is not None:

@@ -73,6 +73,7 @@ class Scan:
     m: np.ndarray            # true stage->pixel matrix
     w: int
     h: int
+    crosses_um: np.ndarray | None = None   # Mx2 true stage um of the crosses drawn (crosses_px)
 
 
 def stage_matrix(um_per_px: float, rot_deg: float, flip_y: bool) -> np.ndarray:
@@ -82,7 +83,8 @@ def stage_matrix(um_per_px: float, rot_deg: float, flip_y: bool) -> np.ndarray:
 
 
 def scan(nx=6, ny=5, w=640, h=480, overlap=0.25, um_per_px=0.5, rot_deg=0.55, flip_y=True, jitter_px=10.0,
-         noise=2.0, bits=8, seed=1, blank: set | None = None, moving: set | None = None) -> Scan:
+         noise=2.0, bits=8, seed=1, blank: set | None = None, moving: set | None = None,
+         crosses_px: float | None = None) -> Scan:
     rng = np.random.default_rng(seed)
     m = stage_matrix(um_per_px, rot_deg, flip_y)
     minv = np.linalg.inv(m)
@@ -96,6 +98,17 @@ def scan(nx=6, ny=5, w=640, h=480, overlap=0.25, um_per_px=0.5, rot_deg=0.55, fl
     W = int(np.ceil((true_tl[:, 0] + off[0]).max() + w + margin))
     H = int(np.ceil((true_tl[:, 1] + off[1]).max() + h + margin))
     sample = world(W, H, seed)
+    crosses_um = None
+    if crosses_px:
+        # lithography crosses every crosses_px (true px), dark arms 3 px wide, 30 px long
+        pts = []
+        for cy in np.arange(margin + 20, H - margin, crosses_px):
+            for cx in np.arange(margin + 20, W - margin, crosses_px):
+                sample[int(cy) - 1:int(cy) + 2, int(cx) - 15:int(cx) + 16] = (0.1, 0.1, 0.15)
+                sample[int(cy) - 15:int(cy) + 16, int(cx) - 1:int(cx) + 2] = (0.1, 0.1, 0.15)
+                pts.append([cx + 0.5, cy + 0.5])
+        # world px -> image coordinates (minus off) -> stage um
+        crosses_um = (np.array(pts) - off) @ minv.T
     vig = vignette(w, h)[..., None]
     frames = []
     for k, (s, t) in enumerate(zip(targets, true_tl)):
@@ -109,4 +122,4 @@ def scan(nx=6, ny=5, w=640, h=480, overlap=0.25, um_per_px=0.5, rot_deg=0.55, fl
                 "raw_bytes": px.nbytes, "xyz_um": [float(s[0]), float(s[1]), 0.0],
                 "moving": bool(moving and k in moving)}
         frames.append(Frame(meta, pack_lossless(px)))
-    return Scan(frames, true_tl, m, w, h)
+    return Scan(frames, true_tl, m, w, h, crosses_um)

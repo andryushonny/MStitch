@@ -100,9 +100,14 @@ class Session:
         return self._s.add_image(np.ascontiguousarray(image), float(x_um), float(y_um), moving, row, col)
 
     # --- solve
-    def solve(self, search_um: float | None = None, min_ncc: float = 0.3, min_overlap: float = 0.03) -> Report:
+    def solve(self, search_um: float | None = None, min_ncc: float = 0.3, min_overlap: float = 0.03,
+              anchors_um=None, anchor_radius_um: float | None = None, anchor_weight: float = 4.0) -> Report:
         """Register overlapping pairs, then place all frames. search_um: how far a frame may be from where the
-        stage says (default 6 x repeatability)."""
+        stage says (default 6 x repeatability).
+        anchors_um: control points, Nx2 stage um: lithography crosses whose true places are known (from the
+        drawing, through the lattice). Each is looked for in every frame that holds it (within anchor_radius_um,
+        default 3 x repeatability) and pinned there, strongly (anchor_weight against a perfect pair's 1): drift
+        along the map cannot pile up between crosses. One found far off the others' consensus is dropped."""
         s = self._s
         t0 = time.perf_counter()
         s.wait()
@@ -117,12 +122,72 @@ class Session:
         t2 = time.perf_counter()
         stats_backend = {"backend": s.backend_used, "backend_note": s.backend_note}
         pos, stats, edges = s.solve(1e-3, min_ncc, 1.5, 5)
+        if anchors_um is not None and len(anchors_um):
+            pos, stats, edges = self._anchored(pos, stats, edges, np.asarray(anchors_um, float), infos, min_ncc,
+                                               anchor_radius_um, anchor_weight)
         t3 = time.perf_counter()
         self.timings = {"prepare_wait": t1 - t0, "register": t2 - t1, "solve": t3 - t2}
         stats.update(stats_backend)
         pred = s.predicted()
         self.report = Report(pos, pred, edges, stats, self._poses(infos, pos, pred, edges, min_ncc), self.level)
         return self.report
+
+    def _anchored(self, pos, stats, edges, targets_um, infos, min_ncc, radius_um, weight):
+        from .crosses import refine
+        s = self._s
+        scale = 2 ** self.level
+        m = self.profile.matrix()
+        tpx = (targets_um @ m.T) / scale              # where each cross must be (working level, absolute)
+        r_um = radius_um if radius_um is not None else max(3.0 * self.profile.repeatability_um, 5.0)
+        r_px = max(6, int(round(r_um / self.profile.um_per_px / scale)))
+        greys = {}
+        rows = []
+        for t in tpx:
+            for k, inf in enumerate(infos):
+                if not inf["ready"]:
+                    continue
+                u, v = t - pos[k]                         # in the frame, as placed by the solve so far
+                if u < r_px + 2 or v < r_px + 2 or u > inf["w"] - r_px - 3 or v > inf["h"] - r_px - 3:
+                    continue
+                if k not in greys:
+                    greys[k] = s.tile_rgb(k).astype(np.float32).mean(axis=2)
+                c = refine(greys[k], u, v, r_px)
+                if c is not None:
+                    rows.append([k, c[0], c[1], t[0], t[1], weight])
+        before = None
+        if rows:
+            a = np.array(rows)
+            # how far the crosses sat from their places before pinning (the drift the pins take out)
+            d0 = pos[a[:, 0].astype(int)] + a[:, 1:3] - a[:, 3:5]
+            d0 -= np.median(d0, axis=0)
+            before = float(np.sqrt((d0 ** 2).sum(axis=1).mean())) * scale
+            for _ in range(2):
+                pos, stats, edges = s.solve(1e-3, min_ncc, 1.5, 5, np.ascontiguousarray(a))
+                r = np.linalg.norm(pos[a[:, 0].astype(int)] + a[:, 1:3] - a[:, 3:5], axis=1)
+                lim = max(1.0 / scale, 5 * 1.4826 * float(np.median(r)))
+                keep = r <= lim
+                if keep.all() or keep.sum() < 2:
+                    break
+                a = a[keep]
+            r = np.linalg.norm(pos[a[:, 0].astype(int)] + a[:, 1:3] - a[:, 3:5], axis=1) * scale
+            # the camera's scale against the drawing: two crosses in one frame, their distance in the frame against
+            # their distance by the drawing (what pins cannot fix: a frame is only moved, not stretched)
+            ratios = []
+            for k in np.unique(a[:, 0]):
+                q = a[a[:, 0] == k]
+                for i in range(len(q)):
+                    for j in range(i + 1, len(q)):
+                        dt = np.hypot(*(q[i, 3:5] - q[j, 3:5]))
+                        if dt > 20:
+                            ratios.append(np.hypot(*(q[i, 1:3] - q[j, 1:3])) / dt)
+            if ratios:
+                stats["frame_scale_ppm"] = float((np.median(ratios) - 1) * 1e6)
+            stats.update(anchors_used=int(len(a)), anchors_found=len(rows), anchor_rms_px=float(np.sqrt((r ** 2).mean())),
+                         anchor_drift_before_px=before)
+        else:
+            stats.update(anchors_used=0, anchors_found=0)
+        stats["anchors_given"] = int(len(targets_um))
+        return pos, stats, edges
 
     def _poses(self, infos, pos, pred, edges, min_ncc):
         scale = 2 ** self.level
@@ -256,6 +321,10 @@ class Session:
         if res.size:
             m.update(pair_rms_px=float(np.sqrt((res ** 2).mean())), pair_p95_px=float(np.percentile(res, 95)),
                      pair_max_px=float(res.max()), ncc_median=float(np.median(e["ncc"][used])))
+        for k in ("anchors_given", "anchors_found", "anchors_used", "anchor_rms_px", "anchor_drift_before_px",
+                  "frame_scale_ppm"):
+            if rep.stats.get(k) is not None:
+                m[k] = rep.stats[k]
         d = np.array([[p["dx_um"], p["dy_um"]] for p in rep.poses])
         if len(d) >= 2:
             dev = d - np.median(d, axis=0)

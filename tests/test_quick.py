@@ -204,3 +204,43 @@ def test_soft_seams_leave_objects_alone():
     for y, x in zip(ys[::7], xs[::7]):
         near[max(0, y - 20):y + 21, max(0, x - 20):x + 21] = True
     assert not changed[~near].any()
+
+
+def test_crosses_pinned():
+    """The profile's scale 0.3 % off: placed by the pairs, the map's crosses drift away from where the stage
+    says they are, growing across the map; pinned as control points, each lands on its place."""
+    sc = scan(nx=6, ny=4, seed=11, crosses_px=150.0, jitter_px=6)
+    wrong = ms.Profile.guess("sim", 0.5 * 1.003, rotation_deg=0.55, flip_y=True, frame=(sc.w, sc.h), repeatability_um=4)
+
+    def off(rep, s, targets):
+        """Each cross's distance from its place: found in the map's frames as placed, against the place."""
+        from mstitch.crosses import refine
+        scale = 2 ** s.level
+        t = targets @ wrong.matrix().T / scale
+        d = []
+        for p in t:
+            for k in range(len(s._s)):
+                u, v = p - rep.positions_px[k]
+                inf = s._s.tile_info(k)
+                if 20 < u < inf["w"] - 20 and 20 < v < inf["h"] - 20:
+                    c = refine(s._s.tile_rgb(k).astype(np.float32).mean(axis=2), u, v, 12)
+                    if c is not None:
+                        d.append(np.hypot(*(rep.positions_px[k] + c - p)) * scale)
+                    break
+        return np.array(d)
+
+    free = ms.Session(wrong, mode="quality", backend="cpu", eta=False)
+    pinned = ms.Session(wrong, mode="quality", backend="cpu", eta=False)
+    for f in sc.frames:
+        free.add(f)
+        pinned.add(f)
+    rf = free.solve()
+    rp = pinned.solve(anchors_um=sc.crosses_um)
+    df, dp = off(rf, free, sc.crosses_um), off(rp, pinned, sc.crosses_um)
+    df -= np.median(df)
+    print("free", np.abs(df).max(), "pinned", dp.max(), rp.stats)
+    assert rp.stats["anchors_used"] > 10
+    # what is left is the frames' own scale (0.3 % of half a frame: about 1 px at the edges), which the pins
+    # measure: the camera's scale against the drawing
+    assert np.sqrt((dp ** 2).mean()) < 0.7 and dp.max() < 1.2 and np.abs(df).max() > 2.0
+    assert abs(rp.stats["frame_scale_ppm"] - 3000) < 400

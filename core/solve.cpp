@@ -7,10 +7,10 @@ namespace ms {
 
 namespace {
 // Solve (w0 I + sum_e w_e (e_i - e_j)(e_i - e_j)^T) x = b by conjugate gradients; x holds the start.
-void cg(int n, const std::vector<Edge>& edges, const std::vector<double>& w, double w0, const std::vector<double>& b,
-        std::vector<double>& x) {
+void cg(int n, const std::vector<Edge>& edges, const std::vector<double>& w, const std::vector<double>& w0,
+        const std::vector<double>& b, std::vector<double>& x) {
     auto mul = [&](const std::vector<double>& v, std::vector<double>& out) {
-        for (int k = 0; k < n; ++k) out[k] = w0 * v[k];
+        for (int k = 0; k < n; ++k) out[k] = w0[k] * v[k];
         for (size_t e = 0; e < edges.size(); ++e) {
             if (w[e] <= 0) continue;
             const int i = edges[e].i, j = edges[e].j;
@@ -58,10 +58,16 @@ std::vector<Vec2> solve_positions(const std::vector<Vec2>& pred, std::vector<Edg
         for (size_t k = 0; k < edges.size(); ++k)
             if (edges[k].used) w[k] = edges[k].ncc * edges[k].ncc;
         for (int axis = 0; axis < 2; ++axis) {
-            std::vector<double> b(n), x(n);
+            std::vector<double> b(n), x(n), diag(n, p.prior_weight);
             for (int k = 0; k < n; ++k) {
                 b[k] = p.prior_weight * pred[k][axis];
                 x[k] = pos[k][axis];
+            }
+            // control points: pos + (u, v) = (x, y), strongly
+            for (const auto& a : p.anchors) {
+                if (a.tile < 0 || a.tile >= n) continue;
+                diag[a.tile] += a.weight;
+                b[a.tile] += a.weight * (axis == 0 ? a.x - a.u : a.y - a.v);
             }
             for (size_t k = 0; k < edges.size(); ++k) {
                 if (w[k] <= 0) continue;
@@ -69,7 +75,7 @@ std::vector<Vec2> solve_positions(const std::vector<Vec2>& pred, std::vector<Edg
                 b[edges[k].j] += w[k] * t;
                 b[edges[k].i] -= w[k] * t;
             }
-            cg(n, edges, w, p.prior_weight, b, x);
+            cg(n, edges, w, diag, b, x);
             for (int k = 0; k < n; ++k) pos[k][axis] = x[k];
         }
         // Residuals; drop pairs far off the consensus.
