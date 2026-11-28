@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.6.5
+- Windows wheels (Python 3.10–3.13) published with every release: no compiler needed to install; MControl installs and updates MStitch from here by itself.
+
 ## 0.6.4
 - CLI: objects.csv next to the map: every object found (centre and size in stage um, whole from one frame or
   not), for MControl to plan the next round of a scan so that objects sit well inside frames.
